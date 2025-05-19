@@ -11,7 +11,8 @@ jkse.json
 
 # User-specific files
 .Ruserdata
-
+/repo
+/stock-db
 # Example code in package build process
 *-Ex.R
 
