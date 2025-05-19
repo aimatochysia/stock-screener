@@ -4,7 +4,7 @@ jkse.json
 # History files
 .Rhistory
 .Rapp.history
-
+.env
 # Session Data files
 .RData
 .RDataTmp
