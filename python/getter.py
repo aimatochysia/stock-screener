@@ -15,15 +15,14 @@ GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
 BRANCH_NAME = os.getenv('_BRANCH_NAME', 'main')
 TEMP_DIR = os.path.join(os.getcwd(), 'repo')
 STOCK_DB_URL = f'https://{GITHUB_TOKEN}@github.com/{STOCK_DB_REPO}.git'
-STOCK_DB_DIR = os.path.join(os.getcwd(), 'stock-db')
-stocklist_path = os.path.join(STOCK_DB_DIR, 'stocklist.csv')
+stocklist_path = os.path.join(TEMP_DIR, 'stocklist.csv')
 
-if not os.path.exists(STOCK_DB_DIR):
-    print(f"Cloning {STOCK_DB_REPO} into {STOCK_DB_DIR}...")
-    Repo.clone_from(STOCK_DB_URL, STOCK_DB_DIR)
+if not os.path.exists(TEMP_DIR):
+    print(f"Cloning {STOCK_DB_REPO} into {TEMP_DIR}...")
+    Repo.clone_from(STOCK_DB_URL, TEMP_DIR)
 else:
     print(f"Pulling latest changes from {STOCK_DB_REPO}...")
-    stock_db_repo = Repo(STOCK_DB_DIR)
+    stock_db_repo = Repo(TEMP_DIR)
     stock_db_repo.remote(name='origin').pull()
 
 
@@ -55,7 +54,7 @@ else:
     repo = Repo(TEMP_DIR)
 
 def fetch_csv(ticker):
-    print(f"→ Fetching {ticker}")
+    print(f"Fetching {ticker}")
     df = yf.download(ticker, period="3y", interval="1d", auto_adjust=False)
     print('raw data')
     print(df.head(4).to_csv())
@@ -107,12 +106,23 @@ def commit_and_push():
 
 
 testrun_size = 5
+successes = 0
+i = 0
 for ticker in TICKERS:
-    if testrun_size > 0:
-        time.sleep(random.randint(3, 5))
+    i+=1
+    if i >= testrun_size:
+        break
+    sleepy_time = random.randint(10, 30)
+    print(f'waiting {sleepy_time} seconds')
+    time.sleep(sleepy_time)
+    try:
         buffer = fetch_csv(ticker)
         if buffer:
             push_to_github(f"{ticker}.csv", buffer)
-        testrun_size -= 1
+            successes += 1
+        else:
+            print(f"Skipping {ticker} (no data).")
+    except Exception as e:
+        print(f"Error processing {ticker}: {e}")
 
 commit_and_push()
