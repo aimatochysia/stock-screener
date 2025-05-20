@@ -69,13 +69,20 @@ def fetch_csv(ticker):
     if isinstance(df.columns, pd.MultiIndex):
         print(f"MultiIndex columns detected: {df.columns}. Flattening...")
         df.columns = [' '.join(col).strip() for col in df.columns.values]
-
+    
+    df.columns = [col.replace(f' {ticker}', '').strip() for col in df.columns]
     expected_columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-    if not all(col in df.columns for col in expected_columns):
-        print(f"Unexpected columns: {df.columns}. Adjusting...")
-        df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-
-    df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+    print('expect')
+    available_cols = df.columns.tolist()
+    print('avail')
+    selected_cols = ['Date'] + [col for col in ['Open', 'High', 'Low', 'Close', 'Volume'] if col in df.columns]
+    print('select')
+    if len(selected_cols) <= 1:
+        print(f"No usable columns for {ticker}, skipping.")
+        return None
+    
+    df = df[selected_cols]
+    
     print('fixed columns')
     print(df.head(4).to_csv(index=False))
 
@@ -105,14 +112,14 @@ def commit_and_push():
         print(f"Git push failed: {e}")
 
 
-testrun_size = 5
+testrun_size = 0
 successes = 0
 i = 0
 for ticker in TICKERS:
+    # if i >= testrun_size:#prod mode
+    #     break#prod mode
     i+=1
-    if i >= testrun_size:
-        break
-    sleepy_time = random.randint(10, 30)
+    sleepy_time = random.randint(5, 10)
     print(f'waiting {sleepy_time} seconds')
     time.sleep(sleepy_time)
     try:
@@ -124,5 +131,5 @@ for ticker in TICKERS:
             print(f"Skipping {ticker} (no data).")
     except Exception as e:
         print(f"Error processing {ticker}: {e}")
-
+print(f'total ticker run: {i}, with {successes} successes and {i-successes} failures')
 commit_and_push()
