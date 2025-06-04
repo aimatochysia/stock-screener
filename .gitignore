@@ -13,6 +13,7 @@ jkse.json
 .Ruserdata
 /repo
 /stock-db
+/stock-results
 # Example code in package build process
 *-Ex.R
 
