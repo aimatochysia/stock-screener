@@ -75,22 +75,23 @@ def detect_pattern(df):
     y_recent = close[x_start:]
     support_y = np.min(y_recent)
     resistance_y = np.max(y_recent)
-    support_line = [(x_start, support_y), (x_end, support_y)]
-    resistance_line = [(x_start, resistance_y), (x_end, resistance_y)]
+    # Store as (slope, intercept) for line equation
+    support_slope = 0
+    support_intercept = support_y
+    resistance_slope = 0
+    resistance_intercept = resistance_y
 
     if len(recent_troughs) >= 2:
         x_support = recent_troughs.reshape(-1, 1)
         y_support = close[recent_troughs]
         reg_support = LinearRegression().fit(x_support, y_support)
-        m, b = reg_support.coef_[0], reg_support.intercept_
-        support_line = [(x_start, m * x_start + b), (x_end, m * x_end + b)]
+        support_slope, support_intercept = reg_support.coef_[0], reg_support.intercept_
 
     if len(recent_peaks) >= 2:
         x_resist = recent_peaks.reshape(-1, 1)
         y_resist = close[recent_peaks]
         reg_resist = LinearRegression().fit(x_resist, y_resist)
-        m, b = reg_resist.coef_[0], reg_resist.intercept_
-        resistance_line = [(x_start, m * x_start + b), (x_end, m * x_end + b)]
+        resistance_slope, resistance_intercept = reg_resist.coef_[0], reg_resist.intercept_
 
     def is_multiple_tops(peaks):
         if len(peaks) >= 2:
@@ -105,9 +106,9 @@ def detect_pattern(df):
         return False
 
     if is_multiple_tops(recent_peaks):
-        return "multiple tops", support_line, resistance_line
+        return "multiple tops", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
     elif is_multiple_bottoms(recent_troughs):
-        return "multiple bottoms", support_line, resistance_line
+        return "multiple bottoms", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
 
     x_recent = x[-20:]
     y_recent = close[-20:]
@@ -115,7 +116,7 @@ def detect_pattern(df):
     price_range = np.max(y_recent) - np.min(y_recent)
 
     if price_range < 0.05 * np.mean(y_recent) and abs(slope) < 0.01:
-        return "sideways", support_line, resistance_line
+        return "sideways", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
 
     lr_high = LinearRegression().fit(x, highs)
     lr_low = LinearRegression().fit(x, lows)
@@ -123,17 +124,17 @@ def detect_pattern(df):
     low_slope = lr_low.coef_[0]
 
     if high_slope > 0 and low_slope > 0:
-        return "channel up", support_line, resistance_line
+        return "channel up", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
     elif high_slope < 0 and low_slope < 0:
-        return "channel down", support_line, resistance_line
+        return "channel down", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
     elif (high_slope > 0 and low_slope < 0) or (high_slope < 0 and low_slope > 0):
-        return "symmetrical wedge", support_line, resistance_line
+        return "symmetrical wedge", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
     elif high_slope > 0 and low_slope > 0 and high_slope > low_slope:
-        return "rising wedge", support_line, resistance_line
+        return "rising wedge", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
     elif high_slope < 0 and low_slope < 0 and high_slope < low_slope:
-        return "falling wedge", support_line, resistance_line
+        return "falling wedge", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
 
-    return "unclassified", support_line, resistance_line
+    return "unclassified", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
 
 
 def classify_stock_stage(df):
@@ -153,7 +154,9 @@ def line_points(line, x_min, x_max):
     if line is None:
         return None
     slope, intercept = line
-    return [(x_min, slope * x_min + intercept), (x_max, slope * x_max + intercept)]
+    y_min = slope * x_min + intercept
+    y_max = slope * x_max + intercept
+    return [(x_min, y_min), (x_max, y_max)]
 
 def process_stock_csv(file_path, symbol):
     try:
@@ -167,8 +170,17 @@ def process_stock_csv(file_path, symbol):
         support_points = line_points(support_line, x_min, x_max)
         resistance_points = line_points(resistance_line, x_min, x_max)
 
-        support_today = support_line[0] * x_max + support_line[1] if support_line else None
-        resistance_today = resistance_line[0] * x_max + resistance_line[1] if resistance_line else None
+        # Calculate today's support/resistance values
+        support_today = None
+        resistance_today = None
+        
+        if support_line is not None:
+            slope, intercept = support_line
+            support_today = slope * x_max + intercept
+            
+        if resistance_line is not None:
+            slope, intercept = resistance_line
+            resistance_today = slope * x_max + intercept
 
         result = {
             "symbol": symbol,
@@ -176,10 +188,10 @@ def process_stock_csv(file_path, symbol):
             "stage": classify_stock_stage(df),
             "atr": calculate_atr(df),
             "relative_volume": calculate_relative_volume(df),
-            "support": [(round(x, 2), round(y, 2)) for x, y in support_points] if support_points else None,
-            "resistance": [(round(x, 2), round(y, 2)) for x, y in resistance_points] if resistance_points else None,
-            "support_today": round(support_today, 2) if support_today is not None else None,
-            "resistance_today": round(resistance_today, 2) if resistance_today is not None else None,
+            "support": [(round(float(x), 2), round(float(y), 2)) for x, y in support_points] if support_points else None,
+            "resistance": [(round(float(x), 2), round(float(y), 2)) for x, y in resistance_points] if resistance_points else None,
+            "support_today": round(float(support_today), 2) if support_today is not None else None,
+            "resistance_today": round(float(resistance_today), 2) if resistance_today is not None else None,
         }
 
         result.update(calculate_sma(df))
