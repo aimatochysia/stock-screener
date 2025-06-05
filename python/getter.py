@@ -14,6 +14,8 @@ STOCK_DB_REPO = os.getenv('_STOCK_DB_REPO')
 GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
 BRANCH_NAME = os.getenv('_BRANCH_NAME', 'main')
 TEMP_DIR = os.path.join(os.getcwd(), 'repo')
+GIT_USER = os.getenv('_GIT_USER')
+GIT_MAIL = os.getenv('_GIT_MAIL')
 STOCK_DB_URL = f'https://{GITHUB_TOKEN}@github.com/{STOCK_DB_REPO}.git'
 stocklist_path = os.path.join(TEMP_DIR, 'stocklist.csv')
 
@@ -53,6 +55,10 @@ if not os.path.exists(TEMP_DIR):
 else:
     repo = Repo(TEMP_DIR)
 
+with repo.config_writer() as git_config:
+    git_config.set_value("user", "name", GIT_USER)
+    git_config.set_value("user", "email", GIT_MAIL)
+    
 def fetch_csv(ticker):
     print(f"Fetching {ticker}")
     df = yf.download(ticker, period="3y", interval="1d", auto_adjust=False)
@@ -103,8 +109,9 @@ def push_to_github(filename, content_buf):
     print(f"Added {filename} to index")
 
 def commit_and_push():
+    current_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
     try:
-        repo.index.commit(f"Automated stock update:{current_date}")
+        repo.index.commit(f"Automated stock update: {current_date}")
         origin = repo.remote(name='origin')
         origin.push()
         print("Pushed to GitHub.")
