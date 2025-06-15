@@ -1,292 +1,183 @@
 import os
 import random
-import re
-import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import numpy as np
-from scipy.signal import argrelextrema
+from matplotlib.patches import Rectangle
+import shutil
+import stat
 from git import Repo
-from pathlib import Path
-from mplfinance.original_flavor import candlestick_ohlc
 from dotenv import load_dotenv
+import numpy as np
 
 load_dotenv()
-GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
-BRANCH_NAME = os.getenv('_BRANCH_NAME')
-GITHUB_REPO = os.getenv('_GITHUB_REPO')
-STOCK_DB_REPO = os.getenv('_STOCK_DB_REPO')
+SOURCE_REPO = f"https://github.com/{os.getenv('_STOCK_DB_REPO')}.git"
+BRANCH = os.getenv("_BRANCH_NAME", "main")
 
-BASE_DIR = Path('./')
-STOCK_DB_LOCAL = BASE_DIR / 'stock-db'
+# Global variable to control cloning behavior
+CLONE_REPO = False  # Set to False to use local stock-db directory without cloning
 
-def clone_or_pull(repo_url, local_path, branch='main'):
-    if local_path.exists():
-        print(f"Pulling latest changes in {local_path}")
-        repo = Repo(local_path)
-        origin = repo.remotes.origin
-        origin.pull(branch)
-    else:
-        print(f"Cloning into {local_path}")
-        Repo.clone_from(repo_url, local_path, branch=branch)
+def remove_readonly(func, path, _):
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
-def select_random_csv(folder_path):
-    csv_files = list(folder_path.glob('*.csv'))
-    if not csv_files:
-        raise FileNotFoundError(f"No CSV files found in {folder_path}")
-    return random.choice(csv_files)
+def find_significant_levels(df, num_levels=4):
+    """Find significant price levels based on peaks and support/resistance"""
+    
+    highs = df['High'].values
+    lows = df['Low'].values
+    
+    
+    all_prices = np.concatenate([highs, lows])
+    
+    
+    hist, bin_edges = np.histogram(all_prices, bins=50)
+    
+    
+    top_bins = np.argsort(hist)[-num_levels:]
+    
+    
+    significant_levels = []
+    for bin_idx in top_bins:
+        level = (bin_edges[bin_idx] + bin_edges[bin_idx + 1]) / 2
+        significant_levels.append(level)
+    
+    return sorted(significant_levels)
 
-def find_peaks_troughs(df, window=5, min_distance=10, sensitivity=0.02):
-
-    high_prices = df['High'].values
-    low_prices = df['Low'].values
-    close_prices = df['Close'].values
+def find_crossing_dates(df, significant_levels, num_dates=4):
+    """Find dates where price frequently crosses significant levels"""
+    crossing_scores = {}
     
-    
-    initial_peaks = argrelextrema(high_prices, np.greater, order=window)[0]
-    initial_troughs = argrelextrema(low_prices, np.less, order=window)[0]
-    
-    
-    all_extrema = []
-    
-    for peak_idx in initial_peaks:
-        all_extrema.append({
-            'index': peak_idx,
-            'price': high_prices[peak_idx],
-            'type': 'peak'
-        })
-    
-    for trough_idx in initial_troughs:
-        all_extrema.append({
-            'index': trough_idx,
-            'price': low_prices[trough_idx],
-            'type': 'trough'
-        })
-    
-    
-    all_extrema.sort(key=lambda x: x['index'])
-    
-    
-    filtered_extrema = []
-    
-    for extrema in all_extrema:
-        if not filtered_extrema:
-            
-            filtered_extrema.append(extrema)
-        else:
-            last_extrema = filtered_extrema[-1]
-            
-            
-            if extrema['type'] != last_extrema['type']:
-                
-                if extrema['index'] - last_extrema['index'] >= min_distance:
-                    
-                    price_change = abs(extrema['price'] - last_extrema['price']) / last_extrema['price']
-                    if price_change >= sensitivity:
-                        filtered_extrema.append(extrema)
-            else:
-                
-                if extrema['type'] == 'peak':
-                    if extrema['price'] > last_extrema['price']:
-                        
-                        price_change = abs(extrema['price'] - (filtered_extrema[-2]['price'] if len(filtered_extrema) > 1 else extrema['price'])) / (filtered_extrema[-2]['price'] if len(filtered_extrema) > 1 else extrema['price'])
-                        if price_change >= sensitivity:
-                            filtered_extrema[-1] = extrema
-                else:  
-                    if extrema['price'] < last_extrema['price']:
-                        
-                        price_change = abs(extrema['price'] - (filtered_extrema[-2]['price'] if len(filtered_extrema) > 1 else extrema['price'])) / (filtered_extrema[-2]['price'] if len(filtered_extrema) > 1 else extrema['price'])
-                        if price_change >= sensitivity:
-                            filtered_extrema[-1] = extrema
-    
-    
-    peaks_idx = [e['index'] for e in filtered_extrema if e['type'] == 'peak']
-    troughs_idx = [e['index'] for e in filtered_extrema if e['type'] == 'trough']
-    
-    return np.array(peaks_idx), np.array(troughs_idx)
-
-def draw_trend_lines(ax, df, peaks_idx, troughs_idx, show_peak_lines=True, show_trough_lines=True):
-
-    extrema_points = []
-    
-    for peak_idx in peaks_idx:
-        extrema_points.append({
-            'index': peak_idx,
-            'date': df.iloc[peak_idx]['DateNum'],
-            'price': df.iloc[peak_idx]['High'],
-            'type': 'peak'
-        })
-    
-    for trough_idx in troughs_idx:
-        extrema_points.append({
-            'index': trough_idx,
-            'date': df.iloc[trough_idx]['DateNum'],
-            'price': df.iloc[trough_idx]['Low'],
-            'type': 'trough'
-        })
-    
-    
-    extrema_points.sort(key=lambda x: x['date'])
-    
-    
-    if len(extrema_points) >= 2:
-        dates = [point['date'] for point in extrema_points]
-        prices = [point['price'] for point in extrema_points]
+    for i, row in df.iterrows():
+        date = row['Date']
+        high = row['High']
+        low = row['Low']
         
+        # Count how many significant levels are crossed on this day
+        crossings = 0
+        for level in significant_levels:
+            if low <= level <= high:
+                crossings += 1
         
-        if show_peak_lines or show_trough_lines:
-            ax.plot(dates, prices, 'purple', linewidth=2, alpha=0.8, label='Peak-Trough Trend Line')
-        
-        
-        for point in extrema_points:
-            if point['type'] == 'peak' and show_peak_lines:
-                ax.plot(point['date'], point['price'], 'ro', markersize=6, alpha=0.9)
-            elif point['type'] == 'trough' and show_trough_lines:
-                ax.plot(point['date'], point['price'], 'bo', markersize=6, alpha=0.9)
+        if crossings > 0:
+            crossing_scores[date] = crossings
+    
+    # Get top dates with most crossings
+    top_dates = sorted(crossing_scores.items(), key=lambda x: x[1], reverse=True)[:num_dates]
+    return [date for date, score in top_dates]
 
-def plot_peak_trough_line_chart(df, peaks_idx, troughs_idx, symbol):    
-    extrema_points = []
+def plot_candlestick(df, stock_name):
+    # Create subplots with different widths
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [4, 1]})
     
-    for peak_idx in peaks_idx:
-        extrema_points.append({
-            'index': peak_idx,
-            'date': df.iloc[peak_idx]['Date'],
-            'price': df.iloc[peak_idx]['High'],
-            'type': 'peak'
-        })
+    # Use latest 60 data points for analysis
+    latest_data = df.tail(60) if len(df) > 60 else df
     
-    for trough_idx in troughs_idx:
-        extrema_points.append({
-            'index': trough_idx,
-            'date': df.iloc[trough_idx]['Date'],
-            'price': df.iloc[trough_idx]['Low'],
-            'type': 'trough'
-        })
+    # Find significant price levels
+    significant_levels = find_significant_levels(latest_data)
     
+    # Find dates with frequent crossings
+    crossing_dates = find_crossing_dates(latest_data, significant_levels)
     
-    extrema_points.sort(key=lambda x: x['date'])
+    # Convert dates to matplotlib date format
+    dates = mdates.date2num(df['Date'].dt.date)
+    crossing_dates_num = [mdates.date2num(date.date()) for date in crossing_dates]
     
-    if len(extrema_points) >= 2:
-        dates = [point['date'] for point in extrema_points]
-        prices = [point['price'] for point in extrema_points]
-        types = [point['type'] for point in extrema_points]
-        
-        fig, ax = plt.subplots(figsize=(14, 6))
-        
-        
-        ax.plot(dates, prices, 'purple', linewidth=2, alpha=0.8, label='Peak-Trough Line')
-        
-        
-        for i, (date, price, point_type) in enumerate(zip(dates, prices, types)):
-            if point_type == 'peak':
-                ax.plot(date, price, 'ro', markersize=8, alpha=0.9, label='Peaks' if i == 0 or types[i-1] != 'peak' else "")
-            else:
-                ax.plot(date, price, 'bo', markersize=8, alpha=0.9, label='Troughs' if i == 0 or types[i-1] != 'trough' else "")
-        
-        ax.set_title(f'Peak-Trough Line Chart for {symbol}')
-        ax.set_ylabel('Price')
-        ax.set_xlabel('Date')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.show()
-
-def plot_candlestick(df_stock, symbol, show_peak_lines=True, show_trough_lines=True, interactive=True, show_line_chart=False, sensitivity=0.02):
-    df = df_stock.copy()
-    df['Date'] = pd.to_datetime(df['Date'])
-    df['DateNum'] = mdates.date2num(df['Date'])
-    ohlc = df[['DateNum', 'Open', 'High', 'Low', 'Close']].values
-
+    # Plot candlestick chart on ax1
+    for i, (date, open_price, high, low, close) in enumerate(zip(dates, df['Open'], df['High'], df['Low'], df['Close'])):
+        color = 'green' if close >= open_price else 'red'
+        ax1.plot([date, date], [low, high], color='black', linewidth=1)
+        height = abs(close - open_price)
+        bottom = min(open_price, close)
+        rect = Rectangle((date - 0.3, bottom), 0.6, height, 
+                        facecolor=color, edgecolor='black', alpha=0.7)
+        ax1.add_patch(rect)
     
-    peaks_idx, troughs_idx = find_peaks_troughs(df, window=5, min_distance=10, sensitivity=sensitivity)
+    # Add horizontal dotted lines for significant levels
+    for level in significant_levels:
+        ax1.axhline(y=level, color='blue', linestyle='--', alpha=0.7, linewidth=1)
+        ax1.text(dates[-1], level, f'{level:.0f}', fontsize=8, 
+                verticalalignment='bottom', horizontalalignment='left',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
     
-    print(f"Found {len(peaks_idx)} peaks and {len(troughs_idx)} troughs")
-    print(f"Sensitivity setting: {sensitivity*100:.1f}%")
+    # Add vertical lines for frequent crossing dates
+    for date_num in crossing_dates_num:
+        ax1.axvline(x=date_num, color='orange', linestyle=':', alpha=0.8, linewidth=2)
     
+    # Format candlestick plot
+    ax1.set_title(f'Candlestick Chart for {stock_name}', fontsize=14, fontweight='bold')
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('Price')
+    ax1.grid(True, alpha=0.3)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    ax1.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(df)//10)))
     
-    fig, ax = plt.subplots(figsize=(14, 8))
-    candlestick_ohlc(ax, ohlc, width=0.6, colorup='g', colordown='r', alpha=0.8)
-
+    # Create vertical price distribution plot on ax2
+    all_prices = np.concatenate([latest_data['High'].values, latest_data['Low'].values, 
+                                latest_data['Open'].values, latest_data['Close'].values])
+    counts, bins, patches = ax2.hist(all_prices, bins=30, orientation='horizontal', 
+                                   alpha=0.7, color='lightblue', edgecolor='black')
     
-    draw_trend_lines(ax, df, peaks_idx, troughs_idx, show_peak_lines, show_trough_lines)
-
-    ax.xaxis_date()
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-    ax.set_title(f'Candlestick chart for {symbol} with Alternating Peak-Trough Analysis (Sensitivity: {sensitivity*100:.1f}%)')
-    ax.set_ylabel('Price')
-    ax.legend()
-    plt.xticks(rotation=45)
+    # Highlight significant levels on distribution
+    for level in significant_levels:
+        ax2.axhline(y=level, color='blue', linestyle='--', alpha=0.7, linewidth=2)
+    
+    # Format distribution plot
+    ax2.set_title('Price Distribution\n(Last 60 days)', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Frequency')
+    ax2.set_ylabel('Price')
+    ax2.grid(True, alpha=0.3)
+    
+    # Align y-axes
+    ax1_ylim = ax1.get_ylim()
+    ax2.set_ylim(ax1_ylim)
+    
+    plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45)
     plt.tight_layout()
-    
-    if interactive:
-        
-        from matplotlib.widgets import Button
-        
-        
-        ax_toggle_line = plt.axes([0.02, 0.9, 0.12, 0.04])
-        ax_toggle_peaks = plt.axes([0.02, 0.85, 0.1, 0.04])
-        ax_toggle_troughs = plt.axes([0.02, 0.8, 0.1, 0.04])
-        ax_show_line_chart = plt.axes([0.02, 0.75, 0.12, 0.04])
-        
-        
-        button_line = Button(ax_toggle_line, 'Toggle Trend Line')
-        button_peaks = Button(ax_toggle_peaks, 'Toggle Peaks')
-        button_troughs = Button(ax_toggle_troughs, 'Toggle Troughs')
-        button_line_chart = Button(ax_show_line_chart, 'Show Line Chart')
-        
-        
-        trend_line = None
-        peak_markers = []
-        trough_markers = []
-        
-        for line in ax.lines:
-            if line.get_color() == 'purple':
-                trend_line = line
-            elif line.get_color() == 'r' and line.get_marker() == 'o':
-                peak_markers.append(line)
-            elif line.get_color() == 'b' and line.get_marker() == 'o':
-                trough_markers.append(line)
-        
-        def toggle_trend_line(event):
-            if trend_line:
-                trend_line.set_visible(not trend_line.get_visible())
-            plt.draw()
-        
-        def toggle_peaks(event):
-            for marker in peak_markers:
-                marker.set_visible(not marker.get_visible())
-            plt.draw()
-        
-        def toggle_troughs(event):
-            for marker in trough_markers:
-                marker.set_visible(not marker.get_visible())
-            plt.draw()
-        
-        def show_line_chart_button(event):
-            plot_peak_trough_line_chart(df, peaks_idx, troughs_idx, symbol)
-        
-        button_line.on_clicked(toggle_trend_line)
-        button_peaks.on_clicked(toggle_peaks)
-        button_troughs.on_clicked(toggle_troughs)
-        button_line_chart.on_clicked(show_line_chart_button)
-    
     plt.show()
+
+def clone_and_plot_candlestick():
+    stock_db_dir = "stock-db"
+    
+    # Only clone if CLONE_REPO is True and directory doesn't exist, or if forced
+    if CLONE_REPO:
+        if os.path.exists(stock_db_dir):
+            shutil.rmtree(stock_db_dir, onerror=remove_readonly)
+        
+        print(f"Cloning repository from {SOURCE_REPO}...")
+        repo = Repo.clone_from(SOURCE_REPO, stock_db_dir, branch=BRANCH)
+    else:
+        if not os.path.exists(stock_db_dir):
+            print(f"Local directory '{stock_db_dir}' not found. Please set CLONE_REPO=True or create the directory manually.")
+            return
+        print(f"Using local directory: {stock_db_dir}")
+    
+    csv_files = []
+    for root, dirs, files in os.walk(stock_db_dir):
+        for file in files:
+            if file.endswith('.csv'):
+                csv_files.append(os.path.join(root, file))
+    
+    if not csv_files:
+        print("No CSV files found in the repository")
+        return
     
     
-    if show_line_chart:
-        plot_peak_trough_line_chart(df, peaks_idx, troughs_idx, symbol)
+    selected_csv = random.choice(csv_files)
+    stock_name = os.path.basename(selected_csv).replace('.csv', '')
+    print(f"Selected stock: {stock_name}")
+    
+    
+    
+    df = pd.read_csv(selected_csv)
+    
+    
+    df['Date'] = pd.to_datetime(df['Date'])
+    
+    
+    plot_candlestick(df, stock_name)
+    
+    return df
 
-
-stock_db_url = f"https://{GITHUB_TOKEN}@github.com/{STOCK_DB_REPO}.git"
-clone_or_pull(stock_db_url, STOCK_DB_LOCAL, BRANCH_NAME)
-
-
-random_csv_path = select_random_csv(STOCK_DB_LOCAL)
-symbol = random_csv_path.stem
-print(f"Selected stock CSV: {random_csv_path.name} (symbol: {symbol})")
-
-stock_df = pd.read_csv(random_csv_path)
-
-plot_candlestick(stock_df, symbol, show_peak_lines=True, show_trough_lines=True, interactive=True, show_line_chart=False, sensitivity=0.001)
+if __name__ == "__main__":
+    clone_and_plot_candlestick()
