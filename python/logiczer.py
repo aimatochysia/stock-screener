@@ -1,183 +1,125 @@
 import os
-import random
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.patches import Rectangle
-import shutil
-import stat
-from git import Repo
+import mplfinance as mpf
+import scipy
+import math
+import pandas_ta as ta
 from dotenv import load_dotenv
-import numpy as np
+import random
 
 load_dotenv()
 SOURCE_REPO = f"https://github.com/{os.getenv('_STOCK_DB_REPO')}.git"
 BRANCH = os.getenv("_BRANCH_NAME", "main")
+CLONE_REPO = False
 
-# Global variable to control cloning behavior
-CLONE_REPO = False  # Set to False to use local stock-db directory without cloning
 
-def remove_readonly(func, path, _):
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
+def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.1):
+    last_w = 1.0
+    w_step = (last_w - first_w) / len(price)
+    weights = first_w + np.arange(len(price)) * w_step
+    weights[weights < 0] = 0.0
 
-def find_significant_levels(df, num_levels=4):
-    """Find significant price levels based on peaks and support/resistance"""
-    
-    highs = df['High'].values
-    lows = df['Low'].values
-    
-    
-    all_prices = np.concatenate([highs, lows])
-    
-    
-    hist, bin_edges = np.histogram(all_prices, bins=50)
-    
-    
-    top_bins = np.argsort(hist)[-num_levels:]
-    
-    
-    significant_levels = []
-    for bin_idx in top_bins:
-        level = (bin_edges[bin_idx] + bin_edges[bin_idx + 1]) / 2
-        significant_levels.append(level)
-    
-    return sorted(significant_levels)
+    kernel = scipy.stats.gaussian_kde(price, bw_method=atr * atr_mult, weights=weights)
+    min_v, max_v = np.min(price), np.max(price)
+    step = (max_v - min_v) / 200
+    price_range = np.arange(min_v, max_v, step)
+    pdf = kernel(price_range)
+    prom_min = np.max(pdf) * prom_thresh
 
-def find_crossing_dates(df, significant_levels, num_dates=4):
-    """Find dates where price frequently crosses significant levels"""
-    crossing_scores = {}
-    
-    for i, row in df.iterrows():
-        date = row['Date']
-        high = row['High']
-        low = row['Low']
-        
-        # Count how many significant levels are crossed on this day
-        crossings = 0
-        for level in significant_levels:
-            if low <= level <= high:
-                crossings += 1
-        
-        if crossings > 0:
-            crossing_scores[date] = crossings
-    
-    # Get top dates with most crossings
-    top_dates = sorted(crossing_scores.items(), key=lambda x: x[1], reverse=True)[:num_dates]
-    return [date for date, score in top_dates]
+    peaks, props = scipy.signal.find_peaks(pdf, prominence=prom_min)
+    levels = [np.exp(price_range[peak]) for peak in peaks]
 
-def plot_candlestick(df, stock_name):
-    # Create subplots with different widths
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [4, 1]})
-    
-    # Use latest 60 data points for analysis
-    latest_data = df.tail(60) if len(df) > 60 else df
-    
-    # Find significant price levels
-    significant_levels = find_significant_levels(latest_data)
-    
-    # Find dates with frequent crossings
-    crossing_dates = find_crossing_dates(latest_data, significant_levels)
-    
-    # Convert dates to matplotlib date format
-    dates = mdates.date2num(df['Date'].dt.date)
-    crossing_dates_num = [mdates.date2num(date.date()) for date in crossing_dates]
-    
-    # Plot candlestick chart on ax1
-    for i, (date, open_price, high, low, close) in enumerate(zip(dates, df['Open'], df['High'], df['Low'], df['Close'])):
-        color = 'green' if close >= open_price else 'red'
-        ax1.plot([date, date], [low, high], color='black', linewidth=1)
-        height = abs(close - open_price)
-        bottom = min(open_price, close)
-        rect = Rectangle((date - 0.3, bottom), 0.6, height, 
-                        facecolor=color, edgecolor='black', alpha=0.7)
-        ax1.add_patch(rect)
-    
-    # Add horizontal dotted lines for significant levels
-    for level in significant_levels:
-        ax1.axhline(y=level, color='blue', linestyle='--', alpha=0.7, linewidth=1)
-        ax1.text(dates[-1], level, f'{level:.0f}', fontsize=8, 
-                verticalalignment='bottom', horizontalalignment='left',
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
-    
-    # Add vertical lines for frequent crossing dates
-    for date_num in crossing_dates_num:
-        ax1.axvline(x=date_num, color='orange', linestyle=':', alpha=0.8, linewidth=2)
-    
-    # Format candlestick plot
-    ax1.set_title(f'Candlestick Chart for {stock_name}', fontsize=14, fontweight='bold')
-    ax1.set_xlabel('Date')
-    ax1.set_ylabel('Price')
-    ax1.grid(True, alpha=0.3)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-    ax1.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(df)//10)))
-    
-    # Create vertical price distribution plot on ax2
-    all_prices = np.concatenate([latest_data['High'].values, latest_data['Low'].values, 
-                                latest_data['Open'].values, latest_data['Close'].values])
-    counts, bins, patches = ax2.hist(all_prices, bins=30, orientation='horizontal', 
-                                   alpha=0.7, color='lightblue', edgecolor='black')
-    
-    # Highlight significant levels on distribution
-    for level in significant_levels:
-        ax2.axhline(y=level, color='blue', linestyle='--', alpha=0.7, linewidth=2)
-    
-    # Format distribution plot
-    ax2.set_title('Price Distribution\n(Last 60 days)', fontsize=12, fontweight='bold')
-    ax2.set_xlabel('Frequency')
-    ax2.set_ylabel('Price')
-    ax2.grid(True, alpha=0.3)
-    
-    # Align y-axes
-    ax1_ylim = ax1.get_ylim()
-    ax2.set_ylim(ax1_ylim)
-    
-    plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45)
-    plt.tight_layout()
+    return levels, peaks, props, price_range, pdf, weights
+
+def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.25):
+    atr = ta.atr(np.log(data['high']), np.log(data['low']), np.log(data['close']), lookback)
+    all_levels = [None] * len(data)
+
+    for i in range(lookback, len(data)):
+        i_start = i - lookback
+        vals = np.log(data.iloc[i_start+1:i+1]['close'].to_numpy())
+        levels, *_ = find_levels(vals, atr.iloc[i], first_w, atr_mult, prom_thresh)
+        all_levels[i] = levels
+
+    return all_levels
+
+def sr_penetration_signal(data: pd.DataFrame, levels: list):
+    signal = np.zeros(len(data))
+    curr_sig = 0.0
+    close_arr = data['close'].to_numpy()
+    for i in range(1, len(data)):
+        if levels[i] is None:
+            continue
+        last_c, curr_c = close_arr[i - 1], close_arr[i]
+        for level in levels[i]:
+            if curr_c > level and last_c <= level:
+                curr_sig = 1.0
+            elif curr_c < level and last_c >= level:
+                curr_sig = -1.0
+        signal[i] = curr_sig
+    return signal
+
+def plot_with_levels(data, levels, title='Support/Resistance'):
+    latest_levels = [lvl for lvl in levels if lvl is not None]
+    if not latest_levels:
+        print("No levels found.")
+        return
+
+    last_levels = latest_levels[-1]
+    add_plots = [mpf.make_addplot(data['close'])]
+
+    fig, axlist = mpf.plot(
+        data,
+        type='candle',
+        style='yahoo',
+        title=title,
+        addplot=add_plots,
+        returnfig=True,
+        volume=True,
+        figsize=(14, 8)
+    )
+
+    ax = axlist[0]
+    for level in last_levels:
+        ax.axhline(level, color='cyan', linestyle='--', linewidth=1, alpha=0.7)
+
     plt.show()
 
-def clone_and_plot_candlestick():
-    stock_db_dir = "stock-db"
-    
-    # Only clone if CLONE_REPO is True and directory doesn't exist, or if forced
-    if CLONE_REPO:
-        if os.path.exists(stock_db_dir):
-            shutil.rmtree(stock_db_dir, onerror=remove_readonly)
-        
-        print(f"Cloning repository from {SOURCE_REPO}...")
-        repo = Repo.clone_from(SOURCE_REPO, stock_db_dir, branch=BRANCH)
-    else:
-        if not os.path.exists(stock_db_dir):
-            print(f"Local directory '{stock_db_dir}' not found. Please set CLONE_REPO=True or create the directory manually.")
-            return
-        print(f"Using local directory: {stock_db_dir}")
-    
-    csv_files = []
-    for root, dirs, files in os.walk(stock_db_dir):
-        for file in files:
-            if file.endswith('.csv'):
-                csv_files.append(os.path.join(root, file))
-    
-    if not csv_files:
-        print("No CSV files found in the repository")
-        return
-    
-    
-    selected_csv = random.choice(csv_files)
-    stock_name = os.path.basename(selected_csv).replace('.csv', '')
-    print(f"Selected stock: {stock_name}")
-    
-    
-    
-    df = pd.read_csv(selected_csv)
-    
-    
-    df['Date'] = pd.to_datetime(df['Date'])
-    
-    
-    plot_candlestick(df, stock_name)
-    
-    return df
 
-if __name__ == "__main__":
-    clone_and_plot_candlestick()
+def run_from_stockdb(select_one=True, lookback=60):
+    folder = 'stock-db'
+    files = [f for f in os.listdir(folder) if f.endswith('.csv')]
+    
+    if select_one:
+        print("Select a file:")
+        rand_int = 0
+        for idx, f in enumerate(files):
+            # print(f"{idx}: {f}")
+            if f == 'BBCA.JK.csv':
+                rand_int = idx
+        print(rand_int)
+        file_index = rand_int
+        files = [files[file_index]]
+
+    for filename in files:
+        filepath = os.path.join(folder, filename)
+        print(f"\nProcessing: {filename}")
+
+        df = pd.read_csv(filepath)
+        df.columns = [c.lower() for c in df.columns]
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.set_index('date')
+        df = df[['open', 'high', 'low', 'close', 'volume']]
+        df = df.dropna()
+
+        levels = support_resistance_levels(df, lookback, first_w=1.0, atr_mult=3.0)
+        df['sr_signal'] = sr_penetration_signal(df, levels)
+        df['log_ret'] = np.log(df['close']).diff().shift(-1)
+        df['sr_return'] = df['sr_signal'] * df['log_ret']
+
+        plot_with_levels(df, levels, title=f"{filename} Support/Resistance")
+
+
+run_from_stockdb(select_one=True)
