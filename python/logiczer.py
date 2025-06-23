@@ -61,95 +61,58 @@ def sr_penetration_signal(data: pd.DataFrame, levels: list):
         signal[i] = curr_sig
     return signal
 
-def find_latest_channel(data, window=60, tol_mult=1.0, min_hits=5):
-    """
-    Find the latest price channel (upper/lower bounds) with as many hits as possible,
-    using a volatility-based tolerance. Scans from the latest data backwards.
-    Returns a dict with channel info or None if not found.
-    """
-    closes = data['close'].values
-    highs = data['high'].values
-    lows = data['low'].values
-    n = len(closes)
-    if n < window:
-        return None
-    # Use rolling volatility as tolerance (ATR or stddev)
-    volatility = pd.Series(highs - lows).rolling(window=window, min_periods=1).mean().values
-    last_valid = None
-    for end in range(n, window-1, -1):
-        start = end - window
-        seg = closes[start:end]
-        seg_high = highs[start:end]
-        seg_low = lows[start:end]
-        tol = volatility[end-1] * tol_mult
-        upper = np.max(seg_high)
-        lower = np.min(seg_low)
-        # Count hits (within tol of upper/lower)
-        hits_upper = np.sum(np.abs(seg_high - upper) <= tol)
-        hits_lower = np.sum(np.abs(seg_low - lower) <= tol)
-        # Optionally, count closes near bounds as well
-        hits_upper += np.sum(np.abs(seg - upper) <= tol)
-        hits_lower += np.sum(np.abs(seg - lower) <= tol)
-        # Require at least min_hits on both bounds
-        if hits_upper >= min_hits and hits_lower >= min_hits:
-            last_valid = {
-                'start_idx': start,
-                'end_idx': end,
-                'upper': upper,
-                'lower': lower,
-                'tol': tol,
-                'hits_upper': hits_upper,
-                'hits_lower': hits_lower
-            }
-        # If current price breaks channel, stop and return last valid
-        if last_valid is not None:
-            if closes[end-1] > upper + tol or closes[end-1] < lower - tol:
-                return last_valid
-    return last_valid
+def find_latest_dynamic_channel(data: pd.DataFrame, window=60, tol_mult=1.0, min_inside_frac=0.8, max_outliers=3):
 
-def find_latest_dynamic_channel(data, window=60, tol_mult=1.0, min_hits=5):
-    """
-    Find the latest dynamic (sloped) price channel using linear regression on highs and lows.
-    The channel is as close as possible to the latest data, and most candles fit inside (within tolerance).
-    Returns a dict with channel info or None if not found.
-    """
+    if len(data) < window:
+        return None
+
     closes = data['close'].values
     highs = data['high'].values
     lows = data['low'].values
+
+    atr_series = ta.atr(high=pd.Series(highs), low=pd.Series(lows), close=pd.Series(closes), length=window)
     n = len(closes)
-    if n < window:
-        return None
-    volatility = pd.Series(highs - lows).rolling(window=window, min_periods=1).mean().values
-    last_valid = None
-    for end in range(n, window-1, -1):
+
+    for end in range(n, window - 1, -1):
         start = end - window
         x = np.arange(window)
+        seg_close = closes[start:end]
         seg_high = highs[start:end]
         seg_low = lows[start:end]
-        seg_close = closes[start:end]
-        tol = volatility[end-1] * tol_mult
-        # Linear regression for upper and lower bounds
-        coef_high = np.polyfit(x, seg_high, 1)
-        coef_low = np.polyfit(x, seg_low, 1)
-        upper_line = np.polyval(coef_high, x)
-        lower_line = np.polyval(coef_low, x)
-        # Count hits (highs/lows/closes within tol of bounds)
-        hits_upper = np.sum(np.abs(seg_high - upper_line) <= tol)
-        hits_lower = np.sum(np.abs(seg_low - lower_line) <= tol)
-        inside = np.sum((seg_high <= upper_line + tol) & (seg_low >= lower_line - tol))
-        # Require at least min_hits on both bounds and most candles inside
-        if hits_upper >= min_hits and hits_lower >= min_hits and inside >= int(0.8 * window):
-            last_valid = {
+
+        if end - 1 >= len(atr_series):
+            continue
+        atr = atr_series.iloc[end - 1]
+        if pd.isna(atr) or atr == 0:
+            continue
+
+        tol = atr * tol_mult
+
+        slope, intercept = np.polyfit(x, seg_close, 1)
+        trend_line = slope * x + intercept
+        upper_line = trend_line + tol
+        lower_line = trend_line - tol
+
+        inside = np.sum((seg_high <= upper_line) & (seg_low >= lower_line))
+        outside = window - inside
+
+        if inside >= int(min_inside_frac * window) and outside <= max_outliers:
+            return {
                 'start_idx': start,
                 'end_idx': end,
+                'x': x + start,
+                'trend_line': trend_line,
                 'upper_line': upper_line,
                 'lower_line': lower_line,
+                'slope': slope,
+                'intercept': intercept,
                 'tol': tol,
-                'hits_upper': hits_upper,
-                'hits_lower': hits_lower
+                'inside': inside,
+                'outside': outside
             }
-            break  # Take the latest valid channel
-    return last_valid
+
+    return None
+
 
 def plot_with_levels(data, levels, title='Support/Resistance'):
     latest_levels = [lvl for lvl in levels if lvl is not None]
@@ -175,26 +138,9 @@ def plot_with_levels(data, levels, title='Support/Resistance'):
     for level in last_levels:
         ax.axhline(level, color='cyan', linestyle='--', linewidth=1, alpha=0.7)
 
-    # --- Channel plotting ---
-    channel = find_latest_channel(data, window=60, tol_mult=1.0, min_hits=5)
+    channel = find_latest_dynamic_channel(data, window=50, tol_mult=2.0, min_inside_frac=0.8, max_outliers=10)
     if channel:
-        idx = np.arange(channel['start_idx'], channel['end_idx'])
-        # Use integer positions for mplfinance overlay
-        upper = np.full_like(idx, channel['upper'], dtype=float)
-        lower = np.full_like(idx, channel['lower'], dtype=float)
-        ax.plot(idx, upper, color='magenta', linestyle='-', linewidth=2, alpha=0.7, label='Channel Upper')
-        ax.plot(idx, lower, color='orange', linestyle='-', linewidth=2, alpha=0.7, label='Channel Lower')
-        ax.fill_between(idx, lower, upper, color='gray', alpha=0.1, label='Channel')
-        # Remove duplicate labels in legend
-        handles, labels = ax.get_legend_handles_labels()
-        unique = dict(zip(labels, handles))
-        ax.legend(unique.values(), unique.keys())
-
-    # --- Dynamic Channel plotting ---
-    channel = find_latest_dynamic_channel(data, window=60, tol_mult=1.0, min_hits=5)
-    if channel:
-        idx = np.arange(channel['start_idx'], channel['end_idx'])
-        x = idx
+        x = channel['x']
         ax.plot(x, channel['upper_line'], color='magenta', linestyle='-', linewidth=2, alpha=0.7, label='Channel Upper')
         ax.plot(x, channel['lower_line'], color='orange', linestyle='-', linewidth=2, alpha=0.7, label='Channel Lower')
         ax.fill_between(x, channel['lower_line'], channel['upper_line'], color='gray', alpha=0.1, label='Channel')
@@ -213,8 +159,7 @@ def run_from_stockdb(select_one=True, lookback=60):
         print("Select a file:")
         rand_int = 0
         for idx, f in enumerate(files):
-            # print(f"{idx}: {f}")
-            if f == 'BBNI.JK.csv':
+            if f == 'BBCA.JK.csv':
                 rand_int = idx
         print(rand_int)
         file_index = rand_int
@@ -240,3 +185,4 @@ def run_from_stockdb(select_one=True, lookback=60):
 
 
 run_from_stockdb(select_one=True)
+
