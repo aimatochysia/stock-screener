@@ -1,0 +1,29 @@
+# name: Daily Screener & Logiczer
+
+# on:
+#   schedule:
+#     - cron: "0 18 * * 1-5" # Mon–Fri at 17:00 UTC = Midnight UTC+7
+#   workflow_dispatch:
+
+# jobs:
+#   daily-screening:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: Checkout repo
+#         uses: actions/checkout@v4
+
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.10"
+
+#       - name: Install dependencies
+#         run: |
+#           pip install -r requirements.txt
+
+#       - name: Run screener
+#         run: python screener.py
+
+#       - name: Run logiczer
+#         run: python python/logiczer.py
