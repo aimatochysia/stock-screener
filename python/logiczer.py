@@ -61,7 +61,7 @@ def sr_penetration_signal(data: pd.DataFrame, levels: list):
         signal[i] = curr_sig
     return signal
 
-def find_latest_dynamic_channel(data: pd.DataFrame, window=60, tol_mult=1.0, min_inside_frac=0.8, max_outliers=3):
+def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, min_inside_frac=0.1, max_outliers=10):
 
     if len(data) < window:
         return None
@@ -138,7 +138,7 @@ def plot_with_levels(data, levels, title='Support/Resistance'):
     for level in last_levels:
         ax.axhline(level, color='cyan', linestyle='--', linewidth=1, alpha=0.7)
 
-    channel = find_latest_dynamic_channel(data, window=50, tol_mult=2.0, min_inside_frac=0.8, max_outliers=10)
+    channel = find_latest_dynamic_channel(data, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
     if channel:
         x = channel['x']
         ax.plot(x, channel['upper_line'], color='magenta', linestyle='-', linewidth=2, alpha=0.7, label='Channel Upper')
@@ -159,7 +159,7 @@ def run_from_stockdb(select_one=True, lookback=60):
         print("Select a file:")
         rand_int = 0
         for idx, f in enumerate(files):
-            if f == 'BBCA.JK.csv':
+            if f == 'INDY.JK.csv':
                 rand_int = idx
         print(rand_int)
         file_index = rand_int
