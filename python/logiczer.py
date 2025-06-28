@@ -13,20 +13,14 @@ load_dotenv()
 GIT_NAME = os.getenv("GIT_USER_NAME")
 GIT_EMAIL = os.getenv("GIT_USER_EMAIL")
 SOURCE_REPO = f"https://github.com/{os.getenv('_STOCK_DB_REPO')}.git"
+OUT_REPO = f"https://github.com/{os.getenv('_GITHUB_REPO')}.git"
 OUTPUT_REPO = os.getenv("_GITHUB_REPO")
 GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
 BRANCH = os.getenv("_BRANCH_NAME", "main")
 CLONE_REPO = True
 
 STOCK_DIR = 'stock-db'
-
-if CLONE_REPO:
-    if os.path.exists(STOCK_DIR):
-        print(f"[INFO] '{STOCK_DIR}' already exists. Skipping clone.")
-    else:
-        print(f"[INFO] Cloning repo from {SOURCE_REPO}...")
-        subprocess.run(["git", "clone", "-b", BRANCH, SOURCE_REPO, STOCK_DIR], check=True)
-
+OUTPUT_DIR = 'stock-results'
 
 
 def configure_git_identity(repo_path=STOCK_DIR, name=GIT_NAME, email=GIT_EMAIL):
@@ -34,13 +28,18 @@ def configure_git_identity(repo_path=STOCK_DIR, name=GIT_NAME, email=GIT_EMAIL):
     repo.config_writer().set_value("user", "name", name).release()
     repo.config_writer().set_value("user", "email", email).release()
 
-def set_remote_with_pat(repo_path=STOCK_DIR, github_repo=OUTPUT_REPO, pat=GITHUB_TOKEN):
+def set_remote_with_pat(repo_path=OUTPUT_DIR, github_repo=OUTPUT_REPO, pat=GITHUB_TOKEN):
     repo = Repo(repo_path)
     remote_url = f"https://{pat}@github.com/{github_repo}.git"
     repo.remote('origin').set_url(remote_url)
 
 def push_to_repo(repo_path, branch, filename):
     repo = Repo(repo_path)
+    origin = repo.remote(name='origin')
+    try:
+        origin.pull(branch)
+    except Exception as e:
+        print(f"[WARN] Pull failed: {e}")
     if repo.is_dirty(untracked_files=True):
         repo.git.add(A=True)
         repo.index.commit(f"screened: {filename}")
@@ -148,7 +147,7 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
         'date': data.index,
         'levels': [",".join(map(str, lvls)) if lvls else '' for lvls in levels]
     })
-    level_path = os.path.join(STOCK_DIR, filename.replace('.csv', '_levels.csv'))
+    level_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_levels.csv'))
     level_df.to_csv(level_path, index=False)
 
     if channel:
@@ -158,15 +157,15 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
             'lower': channel['lower_line'],
             'trend': channel['trend_line']
         })
-        channel_path = os.path.join(STOCK_DIR, filename.replace('.csv', '_channel.csv'))
+        channel_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_channel.csv'))
         ch_data.to_csv(channel_path, index=False)
 
-    print(f"[SAVED] {filename} → levels + channel data")
+    print(f"[SAVED] {filename}")
 
 
 def process_all_stocks():
     files = [f for f in os.listdir(STOCK_DIR) if f.endswith('.csv') and not f.endswith('_levels.csv') and not f.endswith('_channel.csv')]
-    files = ['BBNI.JK.csv']
+    files = ['BBCA.JK.csv']
     for filename in files:
         filepath = os.path.join(STOCK_DIR, filename)
         print(f"\n[PROCESSING] {filename}")
@@ -189,7 +188,21 @@ def process_all_stocks():
         channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
 
         save_sr_and_channel_data(df, levels, channel, filename)
-        push_to_repo(repo_path=OUTPUT_REPO, branch=BRANCH, filename=filename)
+        push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename=filename)
 
-if __name__ == "__main__":
+
+if CLONE_REPO:
+    if os.path.exists(STOCK_DIR):
+        print(f"[INFO] '{STOCK_DIR}' already exists. Skipping clone.")
+    else:
+        print(f"[INFO] Cloning source repo from {SOURCE_REPO}...")
+        subprocess.run(["git", "clone", "-b", BRANCH, SOURCE_REPO, STOCK_DIR], check=True)
+
+    if os.path.exists(OUTPUT_DIR):
+        print(f"[INFO] '{OUTPUT_DIR}' already exists. Skipping clone.")
+    else:
+        print(f"[INFO] Cloning output repo from {OUT_REPO}...")
+        subprocess.run(["git", "clone", "-b", BRANCH, OUT_REPO, OUTPUT_DIR], check=True)
+    configure_git_identity()
+    set_remote_with_pat()
     process_all_stocks()

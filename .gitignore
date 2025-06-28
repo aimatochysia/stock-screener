@@ -16,7 +16,7 @@ jkse.json
 /stock-results
 # Example code in package build process
 *-Ex.R
-
+tempCodeRunnerFile.py
 # Output files from R CMD build
 /*.tar.gz
 
