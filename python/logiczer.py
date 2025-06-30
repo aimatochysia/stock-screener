@@ -50,10 +50,11 @@ def push_to_repo(repo_path, branch, filename):
         print(f"[INFO] No changes to push for {filename}")
         
 def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.1):
-    if len(price) == 0 or np.isnan(atr) or atr <= 0 or np.all(price == price[0]):
-        return [], [], {}, np.array([]), np.array([]), np.array([])
+    last_w = 1.0
+    w_step = (last_w - first_w) / len(price)
 
-    weights = first_w + np.linspace(0, 1.0, len(price)) * (1.0 - first_w)
+    weights = first_w + np.arange(len(price)) * w_step
+    weights[weights < 0] = 0.0
     kernel = scipy.stats.gaussian_kde(price, bw_method=atr * atr_mult, weights=weights)
     min_v, max_v = np.min(price), np.max(price)
     step = (max_v - min_v) / 200
@@ -72,7 +73,8 @@ def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, a
     all_levels = [None] * len(data)
 
     for i in range(lookback, len(data)):
-        vals = np.log(data.iloc[i - lookback + 1:i + 1]['close'].to_numpy())
+        i_start = i - lookback
+        vals = np.log(data.iloc[i_start+1:i+1]['close'].to_numpy())
         levels, *_ = find_levels(vals, atr.iloc[i], first_w, atr_mult, prom_thresh)
         all_levels[i] = levels
 
@@ -81,6 +83,7 @@ def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, a
 
 def sr_penetration_signal(data: pd.DataFrame, levels: list):
     signal = np.zeros(len(data))
+    curr_sig = 0.0
     close_arr = data['close'].to_numpy()
 
     for i in range(1, len(data)):
@@ -89,9 +92,10 @@ def sr_penetration_signal(data: pd.DataFrame, levels: list):
         last_c, curr_c = close_arr[i - 1], close_arr[i]
         for level in levels[i]:
             if curr_c > level and last_c <= level:
-                signal[i] = 1.0
+                curr_sig = 1.0
             elif curr_c < level and last_c >= level:
-                signal[i] = -1.0
+                curr_sig = -1.0
+        signal[i] = curr_sig
     return signal
 
 
@@ -103,9 +107,11 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
     highs = data['high'].values
     lows = data['low'].values
     atr_series = ta.atr(high=pd.Series(highs), low=pd.Series(lows), close=pd.Series(closes), length=window)
+    n = len(closes)
 
-    for end in range(len(closes), window - 1, -1):
+    for end in range(n, window - 1, -1):
         start = end - window
+        x = np.arange(window)
         seg_close = closes[start:end]
         seg_high = highs[start:end]
         seg_low = lows[start:end]
@@ -118,7 +124,7 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
             continue
 
         tol = atr * tol_mult
-        x = np.arange(window)
+
         slope, intercept = np.polyfit(x, seg_close, 1)
         trend_line = slope * x + intercept
         upper_line = trend_line + tol
@@ -143,29 +149,45 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
 
 
 def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, filename: str):
-    level_df = pd.DataFrame({
-        'date': data.index,
-        'levels': [",".join(map(str, lvls)) if lvls else '' for lvls in levels]
-    })
+    all_prices = sorted(set(round(float(lvl), 2)
+                            for lvl_list in levels if lvl_list
+                            for lvl in lvl_list))
+    levels_df = pd.DataFrame({'level_price': all_prices})
     level_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_levels.csv'))
-    level_df.to_csv(level_path, index=False)
-
+    levels_df.to_csv(level_path, index=False)
+    
+    latest_levels = [lvl for lvl in levels if lvl is not None]
+    if latest_levels:
+        last_levels = sorted(set(round(float(lvl), 2) for lvl in latest_levels[-1]))
+        levels_df = pd.DataFrame({'level_price': last_levels})
+        level_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_levels.csv'))
+        levels_df.to_csv(level_path, index=False)
+    else:
+        print(f"[INFO] No valid support/resistance levels found for {filename}")
+        
     if channel:
-        ch_data = pd.DataFrame({
-            'x': channel['x'],
-            'upper': channel['upper_line'],
-            'lower': channel['lower_line'],
-            'trend': channel['trend_line']
-        })
+        start_idx = channel['start_idx']
+        end_idx = channel['end_idx']
+        start_date = data.index[start_idx]
+        end_date = data.index[end_idx - 1]
+
+        ch_df = pd.DataFrame([{
+            'start_date': start_date,
+            'end_date': end_date,
+            'start_upper': round(channel['upper_line'][0], 2),
+            'start_lower': round(channel['lower_line'][0], 2),
+            'end_upper': round(channel['upper_line'][-1], 2),
+            'end_lower': round(channel['lower_line'][-1], 2),
+        }])
         channel_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_channel.csv'))
-        ch_data.to_csv(channel_path, index=False)
+        ch_df.to_csv(channel_path, index=False)
 
     print(f"[SAVED] {filename}")
 
 
 def process_all_stocks():
     files = [f for f in os.listdir(STOCK_DIR) if f.endswith('.csv') and not f.endswith('_levels.csv') and not f.endswith('_channel.csv')]
-    files = ['BBCA.JK.csv']
+    files = ['BBRI.JK.csv']
     for filename in files:
         filepath = os.path.join(STOCK_DIR, filename)
         print(f"\n[PROCESSING] {filename}")
@@ -180,7 +202,7 @@ def process_all_stocks():
         df = df.set_index('date')
         df = df[['open', 'high', 'low', 'close', 'volume']].dropna()
 
-        levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=2.0)
+        levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
         df['sr_signal'] = sr_penetration_signal(df, levels)
         df['log_ret'] = np.log(df['close']).diff().shift(-1)
         df['sr_return'] = df['sr_signal'] * df['log_ret']
