@@ -6,8 +6,8 @@ import math
 import pandas_ta as ta
 from dotenv import load_dotenv
 import subprocess
-from git import Repo
-
+import shutil
+from git import Repo, InvalidGitRepositoryError, GitCommandError
 load_dotenv()
 
 GIT_NAME = os.getenv("GIT_USER_NAME")
@@ -66,6 +66,50 @@ def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thr
     levels = [np.exp(price_range[peak]) for peak in peaks]
 
     return levels, peaks, props, price_range, pdf, weights
+
+def compute_technical_indicators(df: pd.DataFrame, filename: str):
+    closes = df['close']
+    volume = df['volume']
+    
+    sma_periods = [5, 10, 20, 50, 100, 200]
+    for p in sma_periods:
+        df[f'sma_{p}'] = closes.rolling(window=p).mean()
+        df[f'sma_{p}_diff_pct'] = (df[f'sma_{p}'].pct_change()) * 100
+
+    df['relative_volume'] = df['volume'] / df['volume'].rolling(window=20).mean()
+
+    df['ma_alignment'] = (
+        (df['sma_5'] > df['sma_10']) &
+        (df['sma_10'] > df['sma_20']) &
+        (df['sma_20'] > df['sma_50']) &
+        (df['sma_50'] > df['sma_100']) &
+        (df['sma_100'] > df['sma_200'])
+    ).astype(int)
+
+    df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50']) * 100
+
+    df['rsi_14'] = ta.rsi(closes, length=14)
+    df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
+    df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
+
+    df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+    df['atr_pct'] = (df['atr_14'] / df['close']) * 100
+
+    sma_200 = df['sma_200']
+    df['market_stage'] = 'unknown'
+    df.loc[sma_200.diff() > 0, 'market_stage'] = 'uptrend'
+    df.loc[sma_200.diff() < 0, 'market_stage'] = 'downtrend'
+
+    tech_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_technical.csv'))
+    df_out = df[[
+        'close', 'volume', 'relative_volume',
+        'ma_alignment', 'price_vs_sma_50_pct',
+        'rsi_14', 'rsi_overbought', 'rsi_oversold',
+        'atr_14', 'atr_pct', 'market_stage'
+    ] + [f'sma_{p}' for p in sma_periods] + [f'sma_{p}_diff_pct' for p in sma_periods]]
+
+    df_out.to_csv(tech_path)
+    print(f"[SAVED] Technical indicators for {filename}")
 
 
 def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.25):
@@ -210,21 +254,30 @@ def process_all_stocks():
         channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
 
         save_sr_and_channel_data(df, levels, channel, filename)
+        compute_technical_indicators(df.copy(), filename)
         push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename=filename)
 
 
-if CLONE_REPO:
-    if os.path.exists(STOCK_DIR):
-        print(f"[INFO] '{STOCK_DIR}' already exists. Skipping clone.")
-    else:
-        print(f"[INFO] Cloning source repo from {SOURCE_REPO}...")
-        subprocess.run(["git", "clone", "-b", BRANCH, SOURCE_REPO, STOCK_DIR], check=True)
+def safe_clone_or_pull(repo_url, path, branch="main"):
+    if os.path.exists(path):
+        try:
+            repo = Repo(path)
+            print(f"[INFO] Pulling latest from '{repo_url}' into '{path}'...")
+            origin = repo.remotes.origin
+            repo.git.checkout(branch)
+            origin.pull(branch)
+            return
+        except (InvalidGitRepositoryError, GitCommandError) as e:
+            print(f"[WARN] '{path}' is not a valid Git repo or pull failed: {e}")
+            print(f"[INFO] Deleting '{path}' and re-cloning...")
+            shutil.rmtree(path)
 
-    if os.path.exists(OUTPUT_DIR):
-        print(f"[INFO] '{OUTPUT_DIR}' already exists. Skipping clone.")
-    else:
-        print(f"[INFO] Cloning output repo from {OUT_REPO}...")
-        subprocess.run(["git", "clone", "-b", BRANCH, OUT_REPO, OUTPUT_DIR], check=True)
+    print(f"[INFO] Cloning fresh from '{repo_url}' into '{path}'...")
+    subprocess.run(["git", "clone", "-b", branch, repo_url, path], check=True)
+    
+if CLONE_REPO:
+    safe_clone_or_pull(SOURCE_REPO, STOCK_DIR, BRANCH)
+    safe_clone_or_pull(OUT_REPO, OUTPUT_DIR, BRANCH)
     configure_git_identity()
     set_remote_with_pat()
     process_all_stocks()
