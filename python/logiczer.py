@@ -50,6 +50,12 @@ def push_to_repo(repo_path, branch, filename):
         print(f"[INFO] No changes to push for {filename}")
         
 def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.1):
+    if (
+        len(price) == 0 or
+        np.isnan(atr) or atr <= 0 or
+        np.all(price == price[0])
+    ):
+        return [], [], {}, np.array([]), np.array([]), np.array([])
     last_w = 1.0
     w_step = (last_w - first_w) / len(price)
 
@@ -57,7 +63,11 @@ def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thr
     weights[weights < 0] = 0.0
     kernel = scipy.stats.gaussian_kde(price, bw_method=atr * atr_mult, weights=weights)
     min_v, max_v = np.min(price), np.max(price)
+    if min_v == max_v:
+        return [], [], {}, np.array([]), np.array([]), np.array([])
     step = (max_v - min_v) / 200
+    if step <= 0 or not np.isfinite(step):
+        return [], [], {}, np.array([]), np.array([]), np.array([])
     price_range = np.arange(min_v, max_v, step)
     pdf = kernel(price_range)
     prom_min = np.max(pdf) * prom_thresh
@@ -78,13 +88,17 @@ def compute_technical_indicators(df: pd.DataFrame, filename: str):
 
     df['relative_volume'] = df['volume'] / df['volume'].rolling(window=20).mean()
 
-    df['ma_alignment'] = (
-        (df['sma_5'] > df['sma_10']) &
-        (df['sma_10'] > df['sma_20']) &
-        (df['sma_20'] > df['sma_50']) &
-        (df['sma_50'] > df['sma_100']) &
-        (df['sma_100'] > df['sma_200'])
-    ).astype(int)
+    def format_ma_alignment(row):
+        sma_periods = [5, 10, 20, 50, 100, 200]
+        sma_values = {f'SMA_{p}': row[f'sma_{p}'] for p in sma_periods}
+        
+        if any(pd.isna(val) for val in sma_values.values()):
+            return ''
+        
+        sorted_labels = sorted(sma_values.items(), key=lambda x: -x[1])  # descending order
+        return ' > '.join([label for label, _ in sorted_labels])
+
+    df['ma_alignment'] = df.apply(format_ma_alignment, axis=1)
 
     df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50']) * 100
 
@@ -106,8 +120,10 @@ def compute_technical_indicators(df: pd.DataFrame, filename: str):
         'ma_alignment', 'price_vs_sma_50_pct',
         'rsi_14', 'rsi_overbought', 'rsi_oversold',
         'atr_14', 'atr_pct', 'market_stage'
-    ] + [f'sma_{p}' for p in sma_periods] + [f'sma_{p}_diff_pct' for p in sma_periods]]
+    ] + [f'sma_{p}' for p in sma_periods] + [f'sma_{p}_diff_pct' for p in sma_periods]].tail(1)
 
+    df_out.index.name = 'date'
+    tech_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_technical.csv'))
     df_out.to_csv(tech_path)
     print(f"[SAVED] Technical indicators for {filename}")
 
@@ -231,7 +247,7 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
 
 def process_all_stocks():
     files = [f for f in os.listdir(STOCK_DIR) if f.endswith('.csv') and not f.endswith('_levels.csv') and not f.endswith('_channel.csv')]
-    files = ['BBRI.JK.csv']
+    # files = ['BBRI.JK.csv'] #uncomment for only 1 stock
     for filename in files:
         filepath = os.path.join(STOCK_DIR, filename)
         print(f"\n[PROCESSING] {filename}")
