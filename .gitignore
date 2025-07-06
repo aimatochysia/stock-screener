@@ -8,7 +8,7 @@ jkse.json
 # Session Data files
 .RData
 .RDataTmp
-
+/results_temp
 # User-specific files
 .Ruserdata
 /repo

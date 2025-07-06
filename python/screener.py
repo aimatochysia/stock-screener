@@ -1,258 +1,445 @@
 import os
-import shutil
-import tempfile
-import datetime
-import pandas as pd
+import json
 import numpy as np
-from git import Repo
-import ta
-from scipy.signal import find_peaks
-from sklearn.linear_model import LinearRegression
+import pandas as pd
+import pandas_ta as ta
+from git import Repo, GitCommandError
 from dotenv import load_dotenv
-import gc
-import platform
+from datetime import datetime
+import random
+import time
+
 load_dotenv()
-SOURCE_REPO = f"https://github.com/{os.getenv('_STOCK_DB_REPO')}.git"
-DEST_REPO = f"https://{os.getenv('_GITHUB_TOKEN')}@github.com/{os.getenv('_GITHUB_REPO')}.git"
-BRANCH = os.getenv("_BRANCH_NAME", "main")
 
-def clone_repo(url, branch, clone_dir):
-    return Repo.clone_from(url, clone_dir, branch=branch)
+STOCK_DB_REPO = os.getenv('_STOCK_DB_REPO')
+RESULTS_REPO = os.getenv('_GITHUB_REPO')
+GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
+BRANCH_NAME = os.getenv('_BRANCH_NAME', 'main')
+GIT_USER = os.getenv('GIT_USER_NAME')
+GIT_MAIL = os.getenv('GIT_USER_EMAIL')
 
-def calculate_sma(df, periods=[5, 10, 20, 50, 100, 200]):
-    result = {}
-    for period in periods:
-        if len(df) >= period:
-            sma = df['Close'].rolling(window=period).mean()
-            change = ((sma.iloc[-1] - sma.iloc[0]) / sma.iloc[0]) * 100 if not np.isnan(sma.iloc[0]) else np.nan
-            result[f'sma_change_{period}'] = round(change, 2)
+STOCK_DB_URL = f'https://{GITHUB_TOKEN}@github.com/{STOCK_DB_REPO}.git'
+RESULTS_URL = f'https://{GITHUB_TOKEN}@github.com/{RESULTS_REPO}.git'
+
+TEMP_STOCK_DIR = os.path.join(os.getcwd(), 'stock_temp')
+TEMP_RESULTS_DIR = os.path.join(os.getcwd(), 'results_temp')
+
+
+def setup_repos():
+    for repo_url, temp_dir in [(STOCK_DB_URL, TEMP_STOCK_DIR), (RESULTS_URL, TEMP_RESULTS_DIR)]:
+        if not os.path.exists(temp_dir):
+            print(f"Cloning repository into {temp_dir}...")
+            try:
+                repo = Repo.clone_from(repo_url, temp_dir, branch=BRANCH_NAME)
+            except GitCommandError as e:
+                if "Remote branch" in str(e) and "not found" in str(e):
+                    print(f"Branch '{BRANCH_NAME}' not found. Creating new branch.")
+                    repo = Repo.clone_from(repo_url, temp_dir)
+                    repo.git.checkout('-b', BRANCH_NAME)
+                else:
+                    raise e
         else:
-            result[f'sma_change_{period}'] = np.nan
-    return result
-
-def calculate_atr(df, period=14):
-    try:
-        atr = ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close'], window=period).average_true_range()
-        return round(atr.iloc[-1], 2) if not atr.empty else np.nan
-    except Exception:
-        return np.nan
-
-def calculate_relative_volume(df):
-    try:
-        df['Volume'] = df['Volume'].astype(float)
-        if len(df) >= 63:
-            rel_vol = df['Volume'].iloc[-1] / avg_volume_3mo.iloc[-1]
-            return round(rel_vol, 2)
-        return np.nan
-    except Exception:
-        return np.nan
-
-def detect_support_resistance(df):
-    prices = df['Close'].values
-    support = min(prices[-20:]) if len(prices) >= 20 else np.nan
-    resistance = max(prices[-20:]) if len(prices) >= 20 else np.nan
-    return [support, resistance]
-
-def detect_pattern(df):
-    if len(df) < 30:
-        return "insufficient data", None, None
-
-    close = df['Close'].values
-    highs = df['High'].values
-    lows = df['Low'].values
-    x = np.arange(len(close)).reshape(-1, 1)
-
-    peaks, _ = find_peaks(close, distance=5)
-    troughs, _ = find_peaks(-close, distance=5)
-
-    recent_window = 30
-    x_start = len(close) - recent_window
-    x_end = len(close) - 1
-
-    recent_peaks = peaks[peaks > x_start]
-    recent_troughs = troughs[troughs > x_start]
-
-    y_recent = close[x_start:]
-    support_y = np.min(y_recent)
-    resistance_y = np.max(y_recent)
-    # Store as (slope, intercept) for line equation
-    support_slope = 0
-    support_intercept = support_y
-    resistance_slope = 0
-    resistance_intercept = resistance_y
-
-    if len(recent_troughs) >= 2:
-        x_support = recent_troughs.reshape(-1, 1)
-        y_support = close[recent_troughs]
-        reg_support = LinearRegression().fit(x_support, y_support)
-        support_slope, support_intercept = reg_support.coef_[0], reg_support.intercept_
-
-    if len(recent_peaks) >= 2:
-        x_resist = recent_peaks.reshape(-1, 1)
-        y_resist = close[recent_peaks]
-        reg_resist = LinearRegression().fit(x_resist, y_resist)
-        resistance_slope, resistance_intercept = reg_resist.coef_[0], reg_resist.intercept_
-
-    def is_multiple_tops(peaks):
-        if len(peaks) >= 2:
-            tops = close[peaks]
-            return np.max(tops) - np.min(tops) < 0.02 * np.mean(tops)
-        return False
-
-    def is_multiple_bottoms(troughs):
-        if len(troughs) >= 2:
-            bottoms = close[troughs]
-            return np.max(bottoms) - np.min(bottoms) < 0.02 * np.mean(bottoms)
-        return False
-
-    if is_multiple_tops(recent_peaks):
-        return "multiple tops", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
-    elif is_multiple_bottoms(recent_troughs):
-        return "multiple bottoms", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
-
-    x_recent = x[-20:]
-    y_recent = close[-20:]
-    slope = LinearRegression().fit(x_recent, y_recent).coef_[0]
-    price_range = np.max(y_recent) - np.min(y_recent)
-
-    if price_range < 0.05 * np.mean(y_recent) and abs(slope) < 0.01:
-        return "sideways", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
-
-    lr_high = LinearRegression().fit(x, highs)
-    lr_low = LinearRegression().fit(x, lows)
-    high_slope = lr_high.coef_[0]
-    low_slope = lr_low.coef_[0]
-
-    if high_slope > 0 and low_slope > 0:
-        return "channel up", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
-    elif high_slope < 0 and low_slope < 0:
-        return "channel down", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
-    elif (high_slope > 0 and low_slope < 0) or (high_slope < 0 and low_slope > 0):
-        return "symmetrical wedge", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
-    elif high_slope > 0 and low_slope > 0 and high_slope > low_slope:
-        return "rising wedge", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
-    elif high_slope < 0 and low_slope < 0 and high_slope < low_slope:
-        return "falling wedge", (low_slope, lr_low.intercept_), (high_slope, lr_high.intercept_)
-
-    return "unclassified", (support_slope, support_intercept), (resistance_slope, resistance_intercept)
-
-
-def classify_stock_stage(df):
-    close = df['Close']
-    if len(close) < 20:
-        return "unknown"
-    if close.iloc[-1] > close.rolling(20).mean().iloc[-1] and close.pct_change().rolling(5).mean().iloc[-1] > 0.01:
-        return "breakout"
-    elif close.iloc[-1] < close.rolling(20).mean().iloc[-1] and close.pct_change().rolling(5).mean().iloc[-1] < -0.01:
-        return "breakdown"
-    elif close.pct_change().rolling(5).mean().iloc[-1] < 0.001:
-        return "basing"
-    else:
-        return "topping"
-    
-def line_points(line, x_min, x_max):
-    if line is None:
-        return None
-    slope, intercept = line
-    y_min = slope * x_min + intercept
-    y_max = slope * x_max + intercept
-    return [(x_min, y_min), (x_max, y_max)]
-
-def process_stock_csv(file_path, symbol):
-    try:
-        df = pd.read_csv(file_path)
-        df = df.sort_values(by='Date')
-
-        pattern, support_line, resistance_line = detect_pattern(df)
-        x_min = 0
-        x_max = len(df) - 1
-
-        support_points = line_points(support_line, x_min, x_max)
-        resistance_points = line_points(resistance_line, x_min, x_max)
-
-        # Calculate today's support/resistance values
-        support_today = None
-        resistance_today = None
+            print(f"Pulling latest changes in {temp_dir}...")
+            repo = Repo(temp_dir)
+            repo.remote(name='origin').pull()
         
-        if support_line is not None:
-            slope, intercept = support_line
-            support_today = slope * x_max + intercept
-            
-        if resistance_line is not None:
-            slope, intercept = resistance_line
-            resistance_today = slope * x_max + intercept
+        
+        with repo.config_writer() as git_config:
+            git_config.set_value("user", "name", GIT_USER)
+            git_config.set_value("user", "email", GIT_MAIL)
 
-        result = {
-            "symbol": symbol,
-            "pattern": pattern,
-            "stage": classify_stock_stage(df),
-            "atr": calculate_atr(df),
-            "relative_volume": calculate_relative_volume(df),
-            "support": [(round(float(x), 2), round(float(y), 2)) for x, y in support_points] if support_points else None,
-            "resistance": [(round(float(x), 2), round(float(y), 2)) for x, y in resistance_points] if resistance_points else None,
-            "support_today": round(float(support_today), 2) if support_today is not None else None,
-            "resistance_today": round(float(resistance_today), 2) if resistance_today is not None else None,
+
+def get_stock_json_files():
+    return [f for f in os.listdir(TEMP_STOCK_DIR) if f.endswith('.json') and not f.startswith('stocklist')]
+
+
+def load_stock_json(filepath):
+    with open(filepath, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def compute_technical_indicators(df):
+    closes = df['close']
+    highs = df['high']
+    lows = df['low']
+    volume = df['volume']
+    sma_periods = [5, 10, 20, 50, 100, 200]
+    for period in sma_periods:
+        df[f'sma_{period}'] = closes.rolling(window=period).mean()
+        df[f'sma_{period}_diff_pct'] = (df[f'sma_{period}'].pct_change() * 100)
+    df['relative_volume'] = volume / volume.rolling(window=20).mean()
+    df['price_vs_sma_50_pct'] = ((closes - df['sma_50']) / df['sma_50']) * 100
+    df['rsi_14'] = ta.rsi(closes, length=14)
+    df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
+    df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
+    df['atr_14'] = ta.atr(highs, lows, closes, length=14)
+    df['atr_pct'] = (df['atr_14'] / closes) * 100
+    df['market_stage'] = 'unknown'
+    if 'sma_200' in df.columns:
+        sma_200_diff = df['sma_200'].diff()
+        df.loc[sma_200_diff > 0, 'market_stage'] = 'uptrend'
+        df.loc[sma_200_diff < 0, 'market_stage'] = 'downtrend'
+    def format_ma_alignment(row):
+        sma_values = {}
+        for p in sma_periods:
+            val = row.get(f'sma_{p}', np.nan)
+            if not pd.isna(val):
+                sma_values[f'SMA_{p}'] = val
+        if not sma_values:
+            return ''
+        sorted_labels = sorted(sma_values.items(), key=lambda x: -x[1])
+        return ' > '.join([label for label, _ in sorted_labels])
+    df['ma_alignment'] = df.apply(format_ma_alignment, axis=1)
+    latest = df.iloc[-1]
+    technical_data = {
+        'date': str(latest['date']),
+        'close': round(latest['close'], 2),
+        'volume': int(latest['volume']),
+        'relative_volume': round(latest['relative_volume'], 2) if not pd.isna(latest['relative_volume']) else None,
+        'ma_alignment': latest['ma_alignment'],
+        'price_vs_sma_50_pct': round(latest['price_vs_sma_50_pct'], 2) if not pd.isna(latest['price_vs_sma_50_pct']) else None,
+        'rsi_14': round(latest['rsi_14'], 2) if not pd.isna(latest['rsi_14']) else None,
+        'rsi_overbought': int(latest['rsi_overbought']),
+        'rsi_oversold': int(latest['rsi_oversold']),
+        'atr_14': round(latest['atr_14'], 2) if not pd.isna(latest['atr_14']) else None,
+        'atr_pct': round(latest['atr_pct'], 2) if not pd.isna(latest['atr_pct']) else None,
+        'market_stage': latest['market_stage']
+    }
+    for period in sma_periods:
+        col_name = f'sma_{period}'
+        if col_name in latest and not pd.isna(latest[col_name]):
+            technical_data[col_name] = round(latest[col_name], 2)
+            technical_data[f'{col_name}_diff_pct'] = round(latest[f'{col_name}_diff_pct'], 2) if not pd.isna(latest[f'{col_name}_diff_pct']) else None
+    return technical_data
+
+
+def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.1):
+    import scipy
+    if (
+        len(price) == 0 or
+        np.isnan(atr) or atr <= 0 or
+        np.all(price == price[0])
+    ):
+        return []
+    last_w = 1.0
+    w_step = (last_w - first_w) / len(price)
+    weights = first_w + np.arange(len(price)) * w_step
+    weights[weights < 0] = 0.0
+    kernel = scipy.stats.gaussian_kde(price, bw_method=atr * atr_mult, weights=weights)
+    min_v, max_v = np.min(price), np.max(price)
+    if min_v == max_v:
+        return []
+    step = (max_v - min_v) / 200
+    if step <= 0 or not np.isfinite(step):
+        return []
+    price_range = np.arange(min_v, max_v, step)
+    pdf = kernel(price_range)
+    prom_min = np.max(pdf) * prom_thresh
+    peaks, _ = scipy.signal.find_peaks(pdf, prominence=prom_min)
+    levels = [float(price_range[peak]) for peak in peaks]
+    return sorted([round(l, 2) for l in levels])
+
+
+def calculate_support_resistance(df, lookback=120):
+    closes = df['close'].values
+    highs = df['high'].values
+    lows = df['low'].values
+    
+    
+    atr_series = ta.atr(pd.Series(highs), pd.Series(lows), pd.Series(closes), length=14)
+    
+    if len(df) < lookback:
+        lookback = len(df)
+    
+    
+    recent_closes = closes[-lookback:]
+    recent_atr = atr_series.iloc[-1] if not atr_series.empty else np.std(recent_closes) * 0.1
+    
+    levels = find_levels(recent_closes, recent_atr)
+    
+    return levels
+
+
+def find_price_channel(df, window=120):
+    if len(df) < window:
+        window = len(df)
+    
+    try:
+        recent_data = df.tail(window).copy()
+        closes = recent_data['close'].values
+        highs = recent_data['high'].values
+        lows = recent_data['low'].values
+        x = np.arange(len(closes))
+        slope, intercept = np.polyfit(x, closes, 1)
+        atr_series = ta.atr(pd.Series(highs), pd.Series(lows), pd.Series(closes), length=14)
+        atr = atr_series.iloc[-1] if not atr_series.empty else np.std(closes) * 0.02
+        trend_line = slope * x + intercept
+        upper_line = trend_line + atr * 2
+        lower_line = trend_line - atr * 2
+        start_date = str(recent_data.iloc[0]['date'])
+        end_date = str(recent_data.iloc[-1]['date'])
+        return {
+            'start_date': start_date,
+            'end_date': end_date,
+            'start_upper': round(upper_line[0], 2),
+            'start_lower': round(lower_line[0], 2),
+            'end_upper': round(upper_line[-1], 2),
+            'end_lower': round(lower_line[-1], 2),
+            'slope': round(slope, 4),
+            'atr': round(atr, 2)
         }
-
-        result.update(calculate_sma(df))
-
-        return result
     except Exception as e:
-        print(f"Failed to process {symbol}: {e}")
-        return {"symbol": symbol, "error": str(e)}
+        print(f"Error calculating channel: {e}")
+        return None
 
 
-def push_to_repo(repo_path, branch, filename):
-    repo = Repo(repo_path)
-    repo.git.add(A=True)
-    repo.index.commit(f"screened: {filename}")
-    origin = repo.remote(name='origin')
-    origin.push(refspec=f"{branch}:{branch}")
+def process_stock(ticker, records):
+    df = pd.DataFrame(records)
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
+    
+    # Ensure correct dtypes
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    df = df.dropna()
+    technical = compute_technical_indicators(df)
+    levels = calculate_support_resistance(df)
+    channel = find_price_channel(df)
+    return technical, levels, channel
 
-IS_WINDOWS = platform.system() == "Windows"
 
-if IS_WINDOWS:
-    temp_dir = tempfile.mkdtemp()
-else:
-    temp_dir_context = tempfile.TemporaryDirectory()
-    temp_dir = temp_dir_context.__enter__()
+def commit_and_push_results():
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        results_repo = Repo(TEMP_RESULTS_DIR)
+        if results_repo.is_dirty(untracked_files=True):
+            results_repo.git.add(A=True)
+            results_repo.index.commit(f"Update analysis results: {current_time}")
+            origin = results_repo.remote(name='origin')
+            origin.push()
+            print("✓ Results data pushed to repository")
+    except Exception as e:
+        print(f"Error pushing results data: {e}")
 
-try:
-    source_path = os.path.join(temp_dir, "source_repo")
-    dest_path = os.path.join(temp_dir, "dest_repo")
 
-    print("Cloning source repo...")
-    clone_repo(SOURCE_REPO, BRANCH, source_path)
-    print("Cloning destination repo...")
-    clone_repo(DEST_REPO, BRANCH, dest_path)
-
-    results = []
-    for file in os.listdir(source_path):
-        if file.endswith(".csv"):
-            full_path = os.path.join(source_path, file)
-            symbol = file.replace(".csv", "")
-            print(f"Processing {symbol}...")
-            stock_result = process_stock_csv(full_path, symbol)
-            results.append(stock_result)
-
-    result_df = pd.DataFrame(results)
-    date_str = datetime.datetime.now().strftime("%Y_%m_%d")
-    output_filename = f"screening_results-{date_str}.csv"
-    output_path = os.path.join(dest_path, output_filename)
-    result_df.to_csv(output_path, index=False)
-
-    print("Pushing results to destination repo...")
-    push_to_repo(dest_path, BRANCH, output_filename)
-    print("Done.")
-
-finally:
-    del source_path, dest_path
-    gc.collect()
-
-    if IS_WINDOWS:
+def main():
+    print("=== Stock Screener Started ===")
+    
+    setup_repos()
+    
+    
+    stock_files = get_stock_json_files()
+    print(f"Processing {len(stock_files)} stocks")
+    
+    
+    technical_json = {}
+    levels_channels_json = {}
+    
+    for i, fname in enumerate(stock_files):
+        ticker = fname.replace('.json', '')
+        print(f"\nProgress: {i+1}/{len(stock_files)} - {ticker}")
+        
+        if i > 0:
+            sleep_time = random.randint(2, 5)
+            print(f"Waiting {sleep_time} seconds...")
+            time.sleep(sleep_time)
+        
         try:
-            shutil.rmtree(temp_dir)
+            records = load_stock_json(os.path.join(TEMP_STOCK_DIR, fname))
+            technical, levels, channel = process_stock(ticker, records)
+            technical_json[ticker] = technical
+            levels_channels_json[ticker] = {
+                "levels": levels,
+                "channel": channel
+            }
         except Exception as e:
-            print(f"Warning: Failed to delete Windows temp dir: {e}")
-    else:
-        temp_dir_context.__exit__(None, None, None)
+            print(f"Error processing {ticker}: {e}")
+    
+    # Save combined JSONs
+    with open(os.path.join(TEMP_RESULTS_DIR, 'technical.json'), 'w') as f:
+        json.dump(technical_json, f, indent=2)
+    with open(os.path.join(TEMP_RESULTS_DIR, 'levels_channels.json'), 'w') as f:
+        json.dump(levels_channels_json, f, indent=2)
+    
+    print(f"Saved technical.json and levels_channels.json")
+    
+    commit_and_push_results()
+    
+    print(f"\n=== Completed ===")
+    print(f"Successfully processed: {len(technical_json)}/{len(stock_files)} stocks")
+
+
+if __name__ == "__main__":
+    main()
+        
+    for period in sma_periods:
+        col_name = f'sma_{period}'
+        if col_name in latest and not pd.isna(latest[col_name]):
+            technical_data[col_name] = round(latest[col_name], 2)
+            technical_data[f'{col_name}_diff_pct'] = round(latest[f'{col_name}_diff_pct'], 2) if not pd.isna(latest[f'{col_name}_diff_pct']) else None
+    
+    return technical_data
+    
+except Exception as e:
+    print(f"Error calculating technical indicators: {e}")
+    return None
+
+
+def process_stock(ticker):
+    print(f"\n=== Processing {ticker} ===")
+    
+    
+    df = fetch_stock_data(ticker)
+    if df is None:
+        return None
+    
+    try:
+        
+        history = []
+        for _, row in df.iterrows():
+            history.append({
+                'date': row['Date'].strftime('%Y-%m-%d'),
+                'open': round(row['Open'], 2),
+                'high': round(row['High'], 2),
+                'low': round(row['Low'], 2),
+                'close': round(row['Close'], 2),
+                'volume': int(row['Volume'])
+            })
+        
+        
+        technical = calculate_technical_indicators(df)
+        
+        
+        levels = calculate_support_resistance(df)
+        
+        
+        channel = find_price_channel(df)
+        
+        
+        stock_data = {
+            'symbol': ticker,
+            'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'history': history,
+            'technical': technical,
+            'levels': levels,
+            'channel': channel
+        }
+        
+        print(f"✓ Successfully processed {ticker}")
+        return stock_data
+        
+    except Exception as e:
+        print(f"✗ Error processing {ticker}: {e}")
+        return None
+
+
+def save_individual_files(stock_data):
+    ticker = stock_data['symbol']
+    
+    try:
+        
+        history_df = pd.DataFrame(stock_data['history'])
+        history_path = os.path.join(TEMP_STOCK_DIR, f"{ticker}.csv")
+        history_df.to_csv(history_path, index=False)
+        
+        
+        if stock_data['technical']:
+            tech_df = pd.DataFrame([stock_data['technical']])
+            tech_path = os.path.join(TEMP_RESULTS_DIR, f"{ticker}_technical.csv")
+            tech_df.to_csv(tech_path, index=False)
+        
+        
+        if stock_data['levels']:
+            levels_df = pd.DataFrame({'level_price': stock_data['levels']})
+            levels_path = os.path.join(TEMP_RESULTS_DIR, f"{ticker}_levels.csv")
+            levels_df.to_csv(levels_path, index=False)
+        
+        
+        if stock_data['channel']:
+            channel_df = pd.DataFrame([stock_data['channel']])
+            channel_path = os.path.join(TEMP_RESULTS_DIR, f"{ticker}_channel.csv")
+            channel_df.to_csv(channel_path, index=False)
+            
+    except Exception as e:
+        print(f"Error saving individual files for {ticker}: {e}")
+
+
+def commit_and_push_repos():
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    
+    try:
+        stock_repo = Repo(TEMP_STOCK_DIR)
+        if stock_repo.is_dirty(untracked_files=True):
+            stock_repo.git.add(A=True)
+            stock_repo.index.commit(f"Update stock data: {current_time}")
+            origin = stock_repo.remote(name='origin')
+            origin.push()
+            print("✓ Stock data pushed to repository")
+    except Exception as e:
+        print(f"Error pushing stock data: {e}")
+    
+    
+    try:
+        results_repo = Repo(TEMP_RESULTS_DIR)
+        if results_repo.is_dirty(untracked_files=True):
+            results_repo.git.add(A=True)
+            results_repo.index.commit(f"Update analysis results: {current_time}")
+            origin = results_repo.remote(name='origin')
+            origin.push()
+            print("✓ Results data pushed to repository")
+    except Exception as e:
+        print(f"Error pushing results data: {e}")
+
+
+def main():
+    print("=== Stock Screener Started ===")
+    
+    
+    setup_repos()
+    
+    
+    tickers = get_stock_list()
+    print(f"Processing {len(tickers)} stocks: {tickers}")
+    
+    
+    all_stock_data = {}
+    successful_count = 0
+    
+    for i, ticker in enumerate(tickers):
+        print(f"\nProgress: {i+1}/{len(tickers)}")
+        
+        
+        if i > 0:
+            sleep_time = random.randint(3, 8)
+            print(f"Waiting {sleep_time} seconds...")
+            time.sleep(sleep_time)
+        
+        
+        stock_data = process_stock(ticker)
+        
+        if stock_data:
+            all_stock_data[ticker.lower()] = stock_data
+            save_individual_files(stock_data)
+            successful_count += 1
+        else:
+            print(f"✗ Failed to process {ticker}")
+    
+    
+    if all_stock_data:
+        json_path = os.path.join(TEMP_RESULTS_DIR, 'combined_stock_data.json')
+        with open(json_path, 'w') as f:
+            json.dump(all_stock_data, f, indent=2)
+        print(f"Saved combined data for {len(all_stock_data)} stocks to combined_stock_data.json")
+    
+    
+    commit_and_push_repos()
+    
+    print(f"\n=== Completed ===")
+    print(f"Successfully processed: {successful_count}/{len(tickers)} stocks")
+    print(f"Combined JSON contains {len(all_stock_data)} stocks")
+
+
+if __name__ == "__main__":
+    main()
