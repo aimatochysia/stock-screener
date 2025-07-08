@@ -9,7 +9,10 @@ import random
 import time
 import pandas as pd
 import json
+import platform
 
+
+start_time = time.time()
 load_dotenv()
 STOCK_DB_REPO = os.getenv('_STOCK_DB_REPO')
 GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
@@ -120,15 +123,16 @@ def commit_and_push():
     except GitCommandError as e:
         print(f"Git push failed: {e}")
 
-
 testrun_size = 0
 successes = 0
 i = 0
+total_tickers = len(TICKERS)
 for ticker in TICKERS:
     # if i >= testrun_size: #prod mode
     #     break #prod mode
     i+=1
     sleepy_time = random.randint(5, 10)
+    print(f"now running{i}/{total_tickers} ({i/total_tickers*100:.2f}%) ")
     print(f'waiting {sleepy_time} seconds')
     time.sleep(sleepy_time)
     try:
@@ -142,3 +146,6 @@ for ticker in TICKERS:
         print(f"Error processing {ticker}: {e}")
 print(f'total ticker run: {i}, with {successes} successes and {i-successes} failures')
 commit_and_push()
+
+elapsed_time = time.time() - start_time
+print(f"Done! Elapsed time: {elapsed_time:.2f} seconds")

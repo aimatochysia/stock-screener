@@ -9,8 +9,10 @@ import subprocess
 import shutil
 from git import Repo, InvalidGitRepositoryError, GitCommandError
 import json
-load_dotenv()
+import time
+start_time = time.time()
 
+load_dotenv()
 GIT_NAME = os.getenv("GIT_USER_NAME")
 GIT_EMAIL = os.getenv("GIT_USER_EMAIL")
 SOURCE_REPO = f"https://github.com/{os.getenv('_STOCK_DB_REPO')}.git"
@@ -315,3 +317,6 @@ if CLONE_REPO:
     configure_git_identity()
     set_remote_with_pat()
     process_all_stocks()
+
+elapsed_time = time.time() - start_time
+print(f"Done! Elapsed time: {elapsed_time:.2f} seconds")
