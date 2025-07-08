@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import subprocess
 import shutil
 from git import Repo, InvalidGitRepositoryError, GitCommandError
+import json
 load_dotenv()
 
 GIT_NAME = os.getenv("GIT_USER_NAME")
@@ -77,55 +78,69 @@ def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thr
 
     return levels, peaks, props, price_range, pdf, weights
 
-def compute_technical_indicators(df: pd.DataFrame, filename: str):
-    closes = df['close']
-    volume = df['volume']
-    
-    sma_periods = [5, 10, 20, 50, 100, 200]
-    for p in sma_periods:
-        df[f'sma_{p}'] = closes.rolling(window=p).mean()
-        df[f'sma_{p}_diff_pct'] = (df[f'sma_{p}'].pct_change()) * 100
+def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'technical_indicators.json'):
+    result = {}
 
-    df['relative_volume'] = df['volume'] / df['volume'].rolling(window=20).mean()
+    for filename, df in df_dict.items():
+        closes = df['close']
+        volume = df['volume']
+        symbol = filename.replace('.csv', '')
 
-    def format_ma_alignment(row):
         sma_periods = [5, 10, 20, 50, 100, 200]
-        sma_values = {f'SMA_{p}': row[f'sma_{p}'] for p in sma_periods}
-        
-        if any(pd.isna(val) for val in sma_values.values()):
-            return ''
-        
-        sorted_labels = sorted(sma_values.items(), key=lambda x: -x[1])  # descending order
-        return ' > '.join([label for label, _ in sorted_labels])
+        for p in sma_periods:
+            df[f'sma_{p}'] = closes.rolling(window=p).mean()
+            df[f'sma_{p}_diff_pct'] = (df[f'sma_{p}'].pct_change()) * 100
 
-    df['ma_alignment'] = df.apply(format_ma_alignment, axis=1)
+        df['relative_volume'] = volume / volume.rolling(window=20).mean()
 
-    df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50']) * 100
+        def format_ma_alignment(row):
+            sma_values = {f'SMA_{p}': row[f'sma_{p}'] for p in sma_periods}
+            if any(pd.isna(val) for val in sma_values.values()):
+                return ''
+            sorted_labels = sorted(sma_values.items(), key=lambda x: -x[1])
+            return ' > '.join([label for label, _ in sorted_labels])
 
-    df['rsi_14'] = ta.rsi(closes, length=14)
-    df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
-    df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
+        df['ma_alignment'] = df.apply(format_ma_alignment, axis=1)
+        df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50']) * 100
 
-    df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-    df['atr_pct'] = (df['atr_14'] / df['close']) * 100
+        df['rsi_14'] = ta.rsi(closes, length=14)
+        df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
+        df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
 
-    sma_200 = df['sma_200']
-    df['market_stage'] = 'unknown'
-    df.loc[sma_200.diff() > 0, 'market_stage'] = 'uptrend'
-    df.loc[sma_200.diff() < 0, 'market_stage'] = 'downtrend'
+        df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+        df['atr_pct'] = (df['atr_14'] / df['close']) * 100
 
-    tech_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_technical.csv'))
-    df_out = df[[
-        'close', 'volume', 'relative_volume',
-        'ma_alignment', 'price_vs_sma_50_pct',
-        'rsi_14', 'rsi_overbought', 'rsi_oversold',
-        'atr_14', 'atr_pct', 'market_stage'
-    ] + [f'sma_{p}' for p in sma_periods] + [f'sma_{p}_diff_pct' for p in sma_periods]].tail(1)
+        sma_200 = df['sma_200']
+        df['market_stage'] = 'unknown'
+        df.loc[sma_200.diff() > 0, 'market_stage'] = 'uptrend'
+        df.loc[sma_200.diff() < 0, 'market_stage'] = 'downtrend'
 
-    df_out.index.name = 'date'
-    tech_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_technical.csv'))
-    df_out.to_csv(tech_path)
-    print(f"[SAVED] Technical indicators for {filename}")
+        last_row = df.iloc[-1]
+        tech_data = {
+            'close': round(last_row['close'], 2),
+            'volume': int(last_row['volume']),
+            'relative_volume': round(last_row['relative_volume'], 2),
+            'ma_alignment': last_row['ma_alignment'],
+            'price_vs_sma_50_pct': round(last_row['price_vs_sma_50_pct'], 2),
+            'rsi_14': round(last_row['rsi_14'], 2) if not pd.isna(last_row['rsi_14']) else None,
+            'rsi_overbought': int(last_row['rsi_overbought']),
+            'rsi_oversold': int(last_row['rsi_oversold']),
+            'atr_14': round(last_row['atr_14'], 2) if not pd.isna(last_row['atr_14']) else None,
+            'atr_pct': round(last_row['atr_pct'], 2) if not pd.isna(last_row['atr_pct']) else None,
+            'market_stage': last_row['market_stage']
+        }
+
+        for p in sma_periods:
+            tech_data[f'sma_{p}'] = round(last_row[f'sma_{p}'], 2) if not pd.isna(last_row[f'sma_{p}']) else None
+            tech_data[f'sma_{p}_diff_pct'] = round(last_row[f'sma_{p}_diff_pct'], 2) if not pd.isna(last_row[f'sma_{p}_diff_pct']) else None
+
+        result[symbol] = tech_data
+
+    output_path = os.path.join(OUTPUT_DIR, output_filename)
+    with open(output_path, 'w') as f:
+        json.dump(result, f, indent=4)
+
+    print(f"[SAVED] All technical indicators to {output_path}")
 
 
 def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.25):
@@ -209,40 +224,43 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
 
 
 def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, filename: str):
+    result = {}
+
     all_prices = sorted(set(round(float(lvl), 2)
                             for lvl_list in levels if lvl_list
                             for lvl in lvl_list))
-    levels_df = pd.DataFrame({'level_price': all_prices})
-    level_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_levels.csv'))
-    levels_df.to_csv(level_path, index=False)
-    
+    result['all_levels'] = all_prices
+
     latest_levels = [lvl for lvl in levels if lvl is not None]
     if latest_levels:
         last_levels = sorted(set(round(float(lvl), 2) for lvl in latest_levels[-1]))
-        levels_df = pd.DataFrame({'level_price': last_levels})
-        level_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_levels.csv'))
-        levels_df.to_csv(level_path, index=False)
+        result['latest_levels'] = last_levels
     else:
         print(f"[INFO] No valid support/resistance levels found for {filename}")
-        
+        result['latest_levels'] = []
+
     if channel:
         start_idx = channel['start_idx']
         end_idx = channel['end_idx']
-        start_date = data.index[start_idx]
-        end_date = data.index[end_idx - 1]
+        start_date = str(data.index[start_idx])
+        end_date = str(data.index[end_idx - 1])
 
-        ch_df = pd.DataFrame([{
+        result['channel'] = {
             'start_date': start_date,
             'end_date': end_date,
             'start_upper': round(channel['upper_line'][0], 2),
             'start_lower': round(channel['lower_line'][0], 2),
             'end_upper': round(channel['upper_line'][-1], 2),
             'end_lower': round(channel['lower_line'][-1], 2),
-        }])
-        channel_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '_channel.csv'))
-        ch_df.to_csv(channel_path, index=False)
+        }
+    else:
+        result['channel'] = None
 
-    print(f"[SAVED] {filename}")
+    json_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '.json'))
+    with open(json_path, 'w') as f:
+        json.dump(result, f, indent=4)
+
+    print(f"[SAVED] {json_path}")
 
 
 def process_all_stocks():
@@ -270,8 +288,8 @@ def process_all_stocks():
         channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
 
         save_sr_and_channel_data(df, levels, channel, filename)
-        compute_technical_indicators(df.copy(), filename)
-        push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename=filename)
+    compute_technical_indicators(df.copy(), filename)
+    push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename=filename)
 
 
 def safe_clone_or_pull(repo_url, path, branch="main"):

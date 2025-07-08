@@ -28,6 +28,7 @@ else:
     stock_db_repo = Repo(TEMP_DIR)
     stock_db_repo.remote(name='origin').pull()
 
+
 if not os.path.exists(stocklist_path):
     raise FileNotFoundError(f"{stocklist_path} not found in stock-db repository.")
 
@@ -37,6 +38,8 @@ with open(stocklist_path, 'r', encoding='utf-8') as file:
     TICKERS = [row[0] for row in reader if row]
 
 print(f"Fetched tickers: {TICKERS}")
+
+
 
 current_date = datetime.now().strftime('%Y-%m-%d')
 if not os.path.exists(TEMP_DIR):
@@ -65,34 +68,47 @@ def fetch_json(ticker):
         return None
 
     df.reset_index(inplace=True)
+
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [' '.join(col).strip() for col in df.columns.values]
+
     df.columns = [col.replace(f' {ticker}', '').strip() for col in df.columns]
-    selected_cols = ['Date'] + [col for col in ['Open', 'High', 'Low', 'Close', 'Volume'] if col in df.columns]
+    
+    selected_cols = ['Date'] + [col for col in ['Open', 'High', 'Low', 'Close'] if col in df.columns]
+
     if len(selected_cols) <= 1:
         print(f"No usable columns for {ticker}, skipping.")
         return None
-    df = df[selected_cols]
-    df = df.dropna()
-    # Convert to JSON records
-    records = []
-    for row in df.itertuples(index=False):
-        records.append({
-            "date": str(getattr(row, "Date")),
-            "open": float(getattr(row, "Open")),
-            "high": float(getattr(row, "High")),
-            "low": float(getattr(row, "Low")),
-            "close": float(getattr(row, "Close")),
-            "volume": int(getattr(row, "Volume"))
-        })
-    return records
 
-def push_to_github_json(filename, records):
+    df = df[selected_cols]
+    df['Date'] = df['Date'].astype(str)
+
+    result = {
+        "ticker": ticker,
+        "data": [
+            {
+                "date": row['Date'],
+                "open": round(row.get('Open', None), 2) if 'Open' in row else None,
+                "high": round(row.get('High', None), 2) if 'High' in row else None,
+                "low": round(row.get('Low', None), 2) if 'Low' in row else None,
+                "close": round(row.get('Close', None), 2) if 'Close' in row else None
+            }
+            for _, row in df.iterrows()
+        ]
+    }
+
+    buffer = io.StringIO()
+    json.dump(result, buffer, indent=2)
+    buffer.seek(0)
+    return buffer
+
+def push_to_github(filename, content_buf):
     file_path = os.path.join(TEMP_DIR, filename)
+    current_date = datetime.now().strftime('%Y-%m-%d')
     with open(file_path, 'w', encoding='utf-8') as file:
-        json.dump(records, file, indent=2)
+        file.write(content_buf.getvalue())
     repo.index.add([file_path])
-    print(f"Added {filename} to index")
+    print(f"Update at {current_date} Added {filename} to index")
 
 def commit_and_push():
     current_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
@@ -104,33 +120,19 @@ def commit_and_push():
     except GitCommandError as e:
         print(f"Git push failed: {e}")
 
+
 testrun_size = 0
 successes = 0
 i = 0
 for ticker in TICKERS:
     # if i >= testrun_size: #prod mode
     #     break #prod mode
-    i += 1
-    sleepy_time = random.randint(5, 10)
-    print(f'waiting {sleepy_time} seconds')
-    time.sleep(sleepy_time)
-    try:
-        records = fetch_json(ticker)
-        if records:
-            push_to_github_json(f"{ticker}.json", records)
-            successes += 1
-        else:
-            print(f"Skipping {ticker} (no data).")
-    except Exception as e:
-        print(f"Error processing {ticker}: {e}")
-print(f'total ticker run: {i}, with {successes} successes and {i-successes} failures')
-commit_and_push()
     i+=1
     sleepy_time = random.randint(5, 10)
     print(f'waiting {sleepy_time} seconds')
     time.sleep(sleepy_time)
     try:
-        buffer = fetch_csv(ticker)
+        buffer = fetch_json(ticker)
         if buffer:
             push_to_github(f"{ticker}.csv", buffer)
             successes += 1

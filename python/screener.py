@@ -279,11 +279,11 @@ if __name__ == "__main__":
             technical_data[col_name] = round(latest[col_name], 2)
             technical_data[f'{col_name}_diff_pct'] = round(latest[f'{col_name}_diff_pct'], 2) if not pd.isna(latest[f'{col_name}_diff_pct']) else None
     
-    return technical_data
+#     return technical_data
     
-except Exception as e:
-    print(f"Error calculating technical indicators: {e}")
-    return None
+# except Exception as e:
+#     print(f"Error calculating technical indicators: {e}")
+#     return None
 
 
 def process_stock(ticker):

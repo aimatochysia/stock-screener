@@ -1,0 +1,10 @@
+beautifulsoup4==4.13.4
+GitPython==3.1.44
+numpy==2.3.1
+pandas==2.3.1
+pandas_ta==0.3.14b0
+python-dotenv==1.1.1
+Requests==2.32.4
+scipy==1.16.0
+setuptools==80.9.0
+yfinance==0.2.61
