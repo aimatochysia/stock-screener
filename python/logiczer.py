@@ -11,6 +11,7 @@ from git import Repo, InvalidGitRepositoryError, GitCommandError
 import json
 import time
 from datetime import datetime
+import concurrent.futures
 start_time = time.time()
 
 load_dotenv()
@@ -85,8 +86,15 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
     result = {}
     current_date = datetime.now().date()
     formatted_date = current_date.strftime("%Y-%m-%d")
-    output_filename = f"{formatted_date}_technical_indicators.json"
+    if not output_filename or output_filename == 'technical_indicators.json':
+        output_filename = f"{formatted_date}_technical_indicators.json"
     for filename, df in df_dict.items():
+        
+        required_cols = {'close', 'volume', 'high', 'low'}
+        if df.empty or not required_cols.issubset(df.columns):
+            print(f"[SKIP] DataFrame for {filename} is empty or missing columns: {required_cols - set(df.columns)}")
+            continue
+
         closes = df['close']
         volume = df['volume']
         symbol = filename.replace('.csv', '')
@@ -120,16 +128,21 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
         df.loc[sma_200.diff() > 0, 'market_stage'] = 'uptrend'
         df.loc[sma_200.diff() < 0, 'market_stage'] = 'downtrend'
 
+        
+        if df.empty:
+            print(f"[SKIP] DataFrame for {filename} is empty after calculations.")
+            continue
+
         last_row = df.iloc[-1]
         tech_data = {
             'close': round(last_row['close'], 2),
             'volume': int(last_row['volume']),
-            'relative_volume': round(last_row['relative_volume'], 2),
+            'relative_volume': round(last_row['relative_volume'], 2) if not pd.isna(last_row['relative_volume']) else None,
             'ma_alignment': last_row['ma_alignment'],
-            'price_vs_sma_50_pct': round(last_row['price_vs_sma_50_pct'], 2),
+            'price_vs_sma_50_pct': round(last_row['price_vs_sma_50_pct'], 2) if not pd.isna(last_row['price_vs_sma_50_pct']) else None,
             'rsi_14': round(last_row['rsi_14'], 2) if not pd.isna(last_row['rsi_14']) else None,
-            'rsi_overbought': int(last_row['rsi_overbought']),
-            'rsi_oversold': int(last_row['rsi_oversold']),
+            'rsi_overbought': int(last_row['rsi_overbought']) if not pd.isna(last_row['rsi_overbought']) else None,
+            'rsi_oversold': int(last_row['rsi_oversold']) if not pd.isna(last_row['rsi_oversold']) else None,
             'atr_14': round(last_row['atr_14'], 2) if not pd.isna(last_row['atr_14']) else None,
             'atr_pct': round(last_row['atr_pct'], 2) if not pd.isna(last_row['atr_pct']) else None,
             'market_stage': last_row['market_stage']
@@ -140,6 +153,7 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
             tech_data[f'sma_{p}_diff_pct'] = round(last_row[f'sma_{p}_diff_pct'], 2) if not pd.isna(last_row[f'sma_{p}_diff_pct']) else None
 
         result[symbol] = tech_data
+        print(f"[INFO] Added technicals for {symbol}")
 
     output_path = os.path.join(OUTPUT_DIR, output_filename)
     with open(output_path, 'w') as f:
@@ -231,12 +245,7 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
 def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, filename: str):
     os.makedirs(os.path.join(OUTPUT_DIR, "l_and_c"), exist_ok=True)
     result = {}
-
-    all_prices = sorted(set(round(float(lvl), 2)
-                            for lvl_list in levels if lvl_list
-                            for lvl in lvl_list))
-    result['all_levels'] = all_prices
-
+    channel_level_path = os.path.join(OUTPUT_DIR, "l_and_c")
     latest_levels = [lvl for lvl in levels if lvl is not None]
     if latest_levels:
         last_levels = sorted(set(round(float(lvl), 2) for lvl in latest_levels[-1]))
@@ -262,41 +271,73 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
     else:
         result['channel'] = None
 
-    json_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '.json'))
+    json_path = os.path.join(channel_level_path, filename.replace('.csv', '.json'))
     with open(json_path, 'w') as f:
         json.dump(result, f, indent=4)
     print(f"[SAVED] {json_path}")
 
 
-def process_all_stocks():
-    files = [f for f in os.listdir(STOCK_DIR) if f.endswith('.csv') and not f.endswith('_levels.csv') and not f.endswith('_channel.csv')]
-    # files = ['BBRI.JK.csv'] #uncomment for only 1 stock
-    df_dict = {}
-    for filename in files:
-        filepath = os.path.join(STOCK_DIR, filename)
-        print(f"\n[PROCESSING] {filename}")
+def process_single_stock(filename):
+    filepath = os.path.join(STOCK_DIR, filename)
+    print(f"\n[PROCESSING] {filename}")
+
+    if filename.endswith('.json'):
+        with open(filepath, 'r') as jf:
+            jdata = json.load(jf)
+        if "data" not in jdata or not isinstance(jdata["data"], list):
+            print(f"[SKIP] JSON file {filename} missing 'data' array")
+            return filename, None
+        df = pd.DataFrame(jdata["data"])
+        symbol = jdata.get("ticker", filename.replace('.json', ''))
+        df.columns = [c.lower() for c in df.columns]
+    else:
         df = pd.read_csv(filepath)
         df.columns = [c.lower() for c in df.columns]
+        symbol = filename.replace('.csv', '')
 
-        if 'date' not in df.columns:
-            print(f"[SKIP] No 'date' column in {filename}")
-            continue
+    if 'date' not in df.columns:
+        print(f"[SKIP] No 'date' column in {filename}")
+        return filename, None
 
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.set_index('date')
-        df = df[['open', 'high', 'low', 'close', 'volume']].dropna()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.set_index('date')
+    keep_cols = [c for c in ['open', 'high', 'low', 'close', 'volume'] if c in df.columns]
+    df = df[keep_cols].dropna()
 
-        levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
-        df['sr_signal'] = sr_penetration_signal(df, levels)
-        df['log_ret'] = np.log(df['close']).diff().shift(-1)
-        df['sr_return'] = df['sr_signal'] * df['log_ret']
+    if not {'open', 'high', 'low', 'close'}.issubset(df.columns):
+        print(f"[SKIP] Missing OHLC columns in {filename}")
+        return filename, None
 
-        channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
-        save_sr_and_channel_data(df, levels, channel, filename)
-        df_dict[filename] = df
-        
-    compute_technical_indicators_all(df.copy(), filename)
-    push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename=filename)
+    if 'volume' not in df.columns:
+        df['volume'] = 0
+
+    # --- Levels and channel calculation ---
+    levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
+    df['sr_signal'] = sr_penetration_signal(df, levels)
+    df['log_ret'] = np.log(df['close']).diff().shift(-1)
+    df['sr_return'] = df['sr_signal'] * df['log_ret']
+
+    channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
+    save_sr_and_channel_data(df, levels, channel, filename)
+    return filename, df
+
+def process_all_stocks():
+    files = [
+        f for f in os.listdir(STOCK_DIR)
+        if (f.endswith('.csv') or f.endswith('.json'))
+        and not f.endswith('_levels.csv')
+        and not f.endswith('_channel.csv')
+    ]
+    df_dict = {}
+    # Use ThreadPoolExecutor for parallel processing
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(process_single_stock, files))
+    for filename, df in results:
+        if df is not None:
+            df_dict[filename] = df
+
+    compute_technical_indicators_all(df_dict)
+    push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename="all_stocks")
 
 
 def safe_clone_or_pull(repo_url, path, branch="main"):
