@@ -10,6 +10,7 @@ import shutil
 from git import Repo, InvalidGitRepositoryError, GitCommandError
 import json
 import time
+from datetime import datetime
 start_time = time.time()
 
 load_dotenv()
@@ -82,7 +83,9 @@ def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thr
 
 def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'technical_indicators.json'):
     result = {}
-
+    current_date = datetime.now().date()
+    formatted_date = current_date.strftime("%Y-%m-%d")
+    output_filename = f"{formatted_date}_technical_indicators.json"
     for filename, df in df_dict.items():
         closes = df['close']
         volume = df['volume']
@@ -226,6 +229,7 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
 
 
 def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, filename: str):
+    os.makedirs(os.path.join(OUTPUT_DIR, "l_and_c"), exist_ok=True)
     result = {}
 
     all_prices = sorted(set(round(float(lvl), 2)
@@ -261,13 +265,13 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
     json_path = os.path.join(OUTPUT_DIR, filename.replace('.csv', '.json'))
     with open(json_path, 'w') as f:
         json.dump(result, f, indent=4)
-
     print(f"[SAVED] {json_path}")
 
 
 def process_all_stocks():
     files = [f for f in os.listdir(STOCK_DIR) if f.endswith('.csv') and not f.endswith('_levels.csv') and not f.endswith('_channel.csv')]
     # files = ['BBRI.JK.csv'] #uncomment for only 1 stock
+    df_dict = {}
     for filename in files:
         filepath = os.path.join(STOCK_DIR, filename)
         print(f"\n[PROCESSING] {filename}")
@@ -288,9 +292,10 @@ def process_all_stocks():
         df['sr_return'] = df['sr_signal'] * df['log_ret']
 
         channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
-
         save_sr_and_channel_data(df, levels, channel, filename)
-    compute_technical_indicators(df.copy(), filename)
+        df_dict[filename] = df
+        
+    compute_technical_indicators_all(df.copy(), filename)
     push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename=filename)
 
 
