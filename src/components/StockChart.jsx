@@ -79,7 +79,7 @@ const StockChart = ({ stock }) => {
               name="Price"
             />
 
-            {/* Support/Resistance Levels from _levels.csv */}
+            {/* Support/Resistance Levels from JSON */}
             {stock.levels.map((level, index) => (
               <ReferenceLine
                 key={`level-${index}`}
@@ -157,7 +157,7 @@ const StockChart = ({ stock }) => {
         </div>
         <div className="detail-item">
           <span>ATR %:</span>
-          <span>{(stock.technical.atr_pct * 100)?.toFixed(2)}%</span>
+          <span>{stock.technical.atr_pct?.toFixed(2)}%</span>
         </div>
         <div className="detail-item">
           <span>Trend:</span>

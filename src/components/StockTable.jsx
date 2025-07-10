@@ -41,22 +41,26 @@ const StockTable = ({
         header: "Symbol",
         cell: (info) => info.getValue(),
       }),
-      columnHelper.accessor("technical.close", {
+      columnHelper.accessor((row) => row.technical?.close, {
+        id: "technical.close",
         header: "Price",
         cell: (info) =>
           info
             .getValue()
             ?.toLocaleString("en-US", { minimumFractionDigits: 2 }) || "N/A",
       }),
-      columnHelper.accessor("technical.volume", {
+      columnHelper.accessor((row) => row.technical?.volume, {
+        id: "technical.volume",
         header: "Volume",
         cell: (info) => (info.getValue() / 1000000).toFixed(2) + "M",
       }),
-      columnHelper.accessor("technical.relative_volume", {
+      columnHelper.accessor((row) => row.technical?.relative_volume, {
+        id: "technical.relative_volume",
         header: "Rel Volume",
         cell: (info) => info.getValue()?.toFixed(2) || "N/A",
       }),
-      columnHelper.accessor("technical.rsi_14", {
+      columnHelper.accessor((row) => row.technical?.rsi_14, {
+        id: "technical.rsi_14",
         header: "RSI (14)",
         cell: (info) => {
           const value = info.getValue();
@@ -66,11 +70,13 @@ const StockTable = ({
           return <span className={className}>{value?.toFixed(2)}</span>;
         },
       }),
-      columnHelper.accessor("technical.atr_pct", {
+      columnHelper.accessor((row) => row.technical?.atr_pct, {
+        id: "technical.atr_pct",
         header: "ATR %",
-        cell: (info) => (info.getValue() * 100)?.toFixed(2) + "%",
+        cell: (info) => info.getValue()?.toFixed(2) + "%",
       }),
-      columnHelper.accessor("technical.market_stage", {
+      columnHelper.accessor((row) => row.technical?.market_stage, {
+        id: "technical.market_stage",
         header: "Trend",
         cell: (info) => {
           const value = info.getValue();

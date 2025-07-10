@@ -1,11 +1,5 @@
 import axios from 'axios'
 import { useState } from 'react'
-import {
-  parseTechnicalCSV,
-  parseLevelsCSV,
-  parseChannelCSV,
-  parseDailyCSV
-} from '../utils/dataParser'
 
 const stockCache = new Map()
 
@@ -14,113 +8,134 @@ export default function useStockData () {
 
   const TECHNICAL_BASE_URL =
     'https://raw.githubusercontent.com/aimatochysia/stock-results/refs/heads/main'
-
   const DAILY_BASE_URL =
     'https://raw.githubusercontent.com/aimatochysia/stock-db/refs/heads/main'
 
-  const fetchCSV = async (url, symbol, type) => {
+  const isLocalhost = () =>
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1')
+
+  const fetchJSON = async (url, symbol, type) => {
     try {
-      console.log(`Fetching ${type} for ${symbol}: ${url}`)
-      const response = await axios.get(url, {
+      let fetchUrl = url
+      if (isLocalhost()) {
+        const corsProxy = 'https://corsproxy.io/?'
+        fetchUrl = corsProxy + encodeURIComponent(url)
+      }
+
+      console.log(`Fetching ${type} for ${symbol}: ${fetchUrl}`)
+      const response = await axios.get(fetchUrl, {
         headers: {
           'Cache-Control': 'max-age=300',
           'If-None-Match': ''
         },
         timeout: 10000
       })
-      console.log(`Successfully fetched ${type} for ${symbol}`)
+
+      if (!response.data) {
+        console.warn(`Empty response for ${type} of ${symbol}`)
+        return null
+      }
+
       return response.data
     } catch (error) {
       if (error.response?.status === 404) {
-        console.warn(`Data not found for ${symbol}_${type} at ${url}`)
+        console.warn(`404 for ${symbol} - ${type}: ${url}`)
       } else {
-        console.error(`Error fetching ${type} for ${symbol}:`, error.message)
+        console.error(`Fetch error for ${symbol} (${type}):`, error.message)
       }
       return null
     }
   }
 
-  const getStockData = async symbol => {
-    console.log(`Getting stock data for: ${symbol}`)
+  const getLatestTechnicalFile = async () => {
+    const today = new Date()
 
+    for (let i = 0; i < 100; i++) {
+      const tryDate = new Date(today)
+      tryDate.setDate(today.getDate() - i)
+
+      const yyyy = tryDate.getFullYear()
+      const mm = String(tryDate.getMonth() + 1).padStart(2, '0')
+      const dd = String(tryDate.getDate()).padStart(2, '0')
+      const fileName = `${yyyy}-${mm}-${dd}_technical_indicators.json`
+
+      const url = `${TECHNICAL_BASE_URL}/${fileName}`
+
+      try {
+        const res = await axios.get(url, { timeout: 5000 })
+        console.log(`Found latest technical file: ${fileName}`)
+        return res.data
+      } catch (err) {
+        if (err.response?.status === 404) continue
+        throw new Error(`Error checking ${fileName}: ${err.message}`)
+      }
+    }
+
+    throw new Error(
+      'Could not find a technical indicators file in the past 100 days.'
+    )
+  }
+
+  const getStockData = async symbol => {
     if (stockCache.has(symbol)) {
-      console.log(`Using cached data for ${symbol}`)
-      return stockCache.get(symbol)
+      const cached = stockCache.get(symbol)
+      if (cached?.technical) {
+        return cached
+      }
+      stockCache.delete(symbol)
     }
 
     try {
-      const [technical, levels, channel, daily] = await Promise.all([
-        fetchCSV(
-          `${TECHNICAL_BASE_URL}/${symbol}_technical.csv`,
+      const [dailyJson, levelsChannelJson, technicalsJson] = await Promise.all([
+        fetchJSON(`${DAILY_BASE_URL}/${symbol}.json`, symbol, 'daily'),
+        fetchJSON(
+          `${TECHNICAL_BASE_URL}/l_and_c/${symbol}.json`,
           symbol,
-          'technical'
+          'levels_channel'
         ),
-        fetchCSV(
-          `${TECHNICAL_BASE_URL}/${symbol}_levels.csv`,
-          symbol,
-          'levels'
-        ),
-        fetchCSV(
-          `${TECHNICAL_BASE_URL}/${symbol}_channel.csv`,
-          symbol,
-          'channel'
-        ),
-        fetchCSV(`${DAILY_BASE_URL}/${symbol}.csv`, symbol, 'daily')
+        getLatestTechnicalFile()
       ])
 
-      console.log(`Raw data received for ${symbol}:`, {
-        technical: technical ? 'OK' : 'MISSING',
-        levels: levels ? 'OK' : 'MISSING',
-        channel: channel ? 'OK' : 'MISSING',
-        daily: daily ? 'OK' : 'MISSING'
-      })
+      const daily = dailyJson?.data || []
+      const levels =
+        levelsChannelJson?.latest_levels?.map(p => ({
+          price: p,
+          level_price: p
+        })) || []
+      const channel = levelsChannelJson?.channel || null
+      const technical = technicalsJson?.[`${symbol}.json`] || null
+
+      if (!technical) {
+        console.warn(`No technical data found for ${symbol}.`)
+        return { symbol, technical: null, levels: [], channel: null, daily: [] }
+      }
 
       const stockData = {
         symbol,
-        technical: technical ? parseTechnicalCSV(technical) : null,
-        levels: levels ? parseLevelsCSV(levels) : [],
-        channel: channel ? parseChannelCSV(channel) : null,
-        daily: daily ? parseDailyCSV(daily) : [],
+        technical,
+        levels,
+        channel,
+        daily,
         lastUpdated: Date.now()
       }
-
-      console.log(`Parsed data for ${symbol}:`, {
-        symbol: stockData.symbol,
-        hasTechnical: !!stockData.technical,
-        levelsCount: stockData.levels.length,
-        hasChannel: !!stockData.channel,
-        dailyCount: stockData.daily.length
-      })
 
       stockCache.set(symbol, stockData)
       return stockData
     } catch (error) {
-      console.error(`Error processing ${symbol}:`, error)
-      return {
-        symbol,
-        technical: null,
-        levels: [],
-        channel: null,
-        daily: []
-      }
+      console.error(`Error processing ${symbol}:`, error.message)
+      return { symbol, technical: null, levels: [], channel: null, daily: [] }
     }
   }
 
   const getMultipleStockData = async symbols => {
-    console.log('Fetching multiple stocks:', symbols)
     setLoading(true)
-
     try {
-      const requests = symbols.map(symbol => getStockData(symbol))
-      const results = await Promise.all(requests)
-      const filteredResults = results.filter(stock => stock.technical !== null)
-
-      console.log(
-        `Successfully loaded ${filteredResults.length} out of ${results.length} stocks`
-      )
-      return filteredResults
+      const results = await Promise.all(symbols.map(getStockData))
+      return results.filter(s => s.technical !== null)
     } catch (error) {
-      console.error('Error loading multiple stocks:', error)
+      console.error('Batch fetch error:', error)
       return []
     } finally {
       setLoading(false)
