@@ -7,16 +7,14 @@ import {
   parseDailyCSV
 } from '../utils/dataParser'
 
-// Create a cache
 const stockCache = new Map()
 
 export default function useStockData () {
   const [loading, setLoading] = useState(false)
 
-  // Stock results repo for technical analysis data
   const TECHNICAL_BASE_URL =
     'https://raw.githubusercontent.com/aimatochysia/stock-results/refs/heads/main'
-  // Stock DB repo for daily price data
+
   const DAILY_BASE_URL =
     'https://raw.githubusercontent.com/aimatochysia/stock-db/refs/heads/main'
 
@@ -28,7 +26,7 @@ export default function useStockData () {
           'Cache-Control': 'max-age=300',
           'If-None-Match': ''
         },
-        timeout: 10000 // 10 second timeout
+        timeout: 10000
       })
       console.log(`Successfully fetched ${type} for ${symbol}`)
       return response.data
@@ -45,7 +43,6 @@ export default function useStockData () {
   const getStockData = async symbol => {
     console.log(`Getting stock data for: ${symbol}`)
 
-    // Return from cache if available
     if (stockCache.has(symbol)) {
       console.log(`Using cached data for ${symbol}`)
       return stockCache.get(symbol)
@@ -95,7 +92,6 @@ export default function useStockData () {
         dailyCount: stockData.daily.length
       })
 
-      // Cache the result
       stockCache.set(symbol, stockData)
       return stockData
     } catch (error) {

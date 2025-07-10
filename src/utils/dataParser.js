@@ -31,7 +31,7 @@ export const parseLevelsCSV = csvData => {
       const price = parseFloat(line.trim())
       return {
         price: price,
-        level_price: price // for backward compatibility
+        level_price: price
       }
     })
     .filter(level => !isNaN(level.price))
@@ -58,8 +58,6 @@ export const parseChannelCSV = csvData => {
   return channel
 }
 
-// Parse daily stock data from stock-db repo
-// Structure: Date,Open,High,Low,Close,Volume
 export const parseDailyCSV = csvData => {
   const lines = csvData.trim().split('\n')
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
@@ -76,7 +74,6 @@ export const parseDailyCSV = csvData => {
         row[header] = parseFloat(value) || 0
       }
     })
-
     return row
   })
 }
