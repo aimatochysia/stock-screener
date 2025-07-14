@@ -83,11 +83,16 @@ def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thr
     return levels, peaks, props, price_range, pdf, weights
 
 def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'technical_indicators.json'):
+    out_dir_0 = os.path.join(os.getcwd(), 'stock-results')
+    OUTPUT_DIR1 = os.path.join(out_dir_0, 'technicals')
+    os.makedirs(OUTPUT_DIR1, exist_ok=True)
     result = {}
     current_date = datetime.now().date()
     formatted_date = current_date.strftime("%Y-%m-%d")
     if not output_filename or output_filename == 'technical_indicators.json':
         output_filename = f"{formatted_date}_technical_indicators.json"
+    total_files = len(df_dict.items())##############################
+    i = 0
     for filename, df in df_dict.items():
         
         required_cols = {'close', 'volume', 'high', 'low'}
@@ -153,9 +158,10 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
             tech_data[f'sma_{p}_diff_pct'] = round(last_row[f'sma_{p}_diff_pct'], 2) if not pd.isna(last_row[f'sma_{p}_diff_pct']) else None
 
         result[symbol] = tech_data
-        print(f"[INFO] Added technicals for {symbol}")
+        i+=1
+        print(f"[INFO] Added technicals for {symbol}. {i}/{total_files} done {(i/total_files)*100:.2f}%")######################
 
-    output_path = os.path.join(OUTPUT_DIR, output_filename)
+    output_path = os.path.join(OUTPUT_DIR1, output_filename)
     with open(output_path, 'w') as f:
         json.dump(result, f, indent=4)
 
@@ -278,7 +284,8 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
 
 
 def process_single_stock(filename):
-    filepath = os.path.join(STOCK_DIR, filename)
+    data_stock_dir = os.path.join(os.getcwd(), 'stock-db', 'data')
+    filepath = os.path.join(data_stock_dir, filename)
     print(f"\n[PROCESSING] {filename}")
 
     if filename.endswith('.json'):
@@ -322,14 +329,14 @@ def process_single_stock(filename):
     return filename, df
 
 def process_all_stocks():
+    data_stock_dir = os.path.join(STOCK_DIR,'data')
     files = [
-        f for f in os.listdir(STOCK_DIR)
-        if (f.endswith('.csv') or f.endswith('.json'))
+        f for f in os.listdir(data_stock_dir)
+        if f.endswith('.json')
         and not f.endswith('_levels.csv')
         and not f.endswith('_channel.csv')
     ]
     df_dict = {}
-    # Use ThreadPoolExecutor for parallel processing
     with concurrent.futures.ThreadPoolExecutor() as executor:
         results = list(executor.map(process_single_stock, files))
     for filename, df in results:

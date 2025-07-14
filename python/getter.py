@@ -9,7 +9,7 @@ import random
 import time
 import pandas as pd
 import json
-import platform
+
 
 
 start_time = time.time()
@@ -17,7 +17,9 @@ load_dotenv()
 STOCK_DB_REPO = os.getenv('_STOCK_DB_REPO')
 GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
 BRANCH_NAME = os.getenv('_BRANCH_NAME', 'main')
-TEMP_DIR = os.path.join(os.getcwd(), 'repo')
+TEMP_DIR = os.path.join(os.getcwd(), 'stock-db')
+DATA_DIR = os.path.join(TEMP_DIR, 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
 GIT_USER = os.getenv('GIT_USER_NAME')
 GIT_MAIL = os.getenv('GIT_USER_EMAIL')
 STOCK_DB_URL = f'https://{GITHUB_TOKEN}@github.com/{STOCK_DB_REPO}.git'
@@ -106,7 +108,7 @@ def fetch_json(ticker):
     return buffer
 
 def push_to_github(filename, content_buf):
-    file_path = os.path.join(TEMP_DIR, filename)
+    file_path = os.path.join(DATA_DIR, filename) 
     current_date = datetime.now().strftime('%Y-%m-%d')
     with open(file_path, 'w', encoding='utf-8') as file:
         file.write(content_buf.getvalue())
