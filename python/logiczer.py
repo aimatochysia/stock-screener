@@ -107,7 +107,7 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
         sma_periods = [5, 10, 20, 50, 100, 200]
         for p in sma_periods:
             df[f'sma_{p}'] = closes.rolling(window=p).mean()
-            df[f'sma_{p}_diff_pct'] = (df[f'sma_{p}'].pct_change()) * 100
+            df[f'sma_{p}_diff_pct'] = (df[f'sma_{p}'].fillna(method='pad').pct_change(fill_method=None)) * 100
 
         df['relative_volume'] = volume / volume.rolling(window=20).mean()
 
