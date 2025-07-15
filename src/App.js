@@ -1,211 +1,149 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import StockTable from './components/StockTable'
-import StockChart from './components/StockChart'
-import TopContenders from './components/TopContenders'
-import ProgressBar from './components/ProgressBar'
+// src/App.js
+import React, { useEffect, useState, useMemo } from 'react'
 import useStockData from './hooks/useStockData'
 import './App.css'
 
-function App () {
-  const [selectedStock, setSelectedStock] = useState(null)
-  const [tableData, setTableData] = useState([])
-  const [topStocks, setTopStocks] = useState([])
-  const [page, setPage] = useState(0)
-  const [filters, setFilters] = useState({})
-  const [sortConfig, setSortConfig] = useState({
-    key: 'rsi_14',
-    direction: 'asc'
-  })
-  const [initialLoading, setInitialLoading] = useState(true)
+function App() {
+  const { getAllLatestTechnical, loading } = useStockData()
+  const [technicalData, setTechnicalData] = useState([])
+  const [search, setSearch] = useState('')
 
-  const { getStockData, getMultipleStockData, loading } = useStockData()
-  const PAGE_SIZE = 20
-
-  // Predefined list of all stock symbols
-  const allSymbols = useMemo(
-    () => [
-      'BBNI.JK',
-      'BBCA.JK',
-      'BBRI.JK',
-      'TLKM.JK',
-      'UNVR.JK',
-      'ASII.JK',
-      'GOTO.JK',
-      'INDF.JK',
-      'ICBP.JK',
-      'UNTR.JK',
-      'BMRI.JK',
-      'KLBF.JK'
-    ],
-    []
-  )
-
-  // Load initial data
   useEffect(() => {
-    const loadInitialData = async () => {
-      console.log('Loading initial data...')
-      setInitialLoading(true)
-
-      try {
-        // Load top 5 contenders first
-        const topSymbols = allSymbols.slice(0, 5)
-        console.log('Loading top contenders:', topSymbols)
-        const topData = await getMultipleStockData(topSymbols)
-        console.log('Top contenders loaded:', topData)
-        setTopStocks(
-          topData.sort((a, b) => a.technical.rsi_14 - b.technical.rsi_14)
-        )
-
-        // Load first page of table data
-        const initialSymbols = allSymbols.slice(0, PAGE_SIZE)
-        console.log('Loading initial table data:', initialSymbols)
-        const tableData = await getMultipleStockData(initialSymbols)
-        console.log('Initial table data loaded:', tableData)
-        setTableData(tableData)
-        setPage(1)
-      } catch (error) {
-        console.error('Error loading initial data:', error)
-      } finally {
-        setInitialLoading(false)
-      }
+    const loadData = async () => {
+      const raw = await getAllLatestTechnical()
+      const parsed = Object.entries(raw).map(([symbolKey, data]) => ({
+        symbol: symbolKey.replace('.json', ''),
+        ...data
+      }))
+      setTechnicalData(parsed)
     }
 
-    loadInitialData()
-  }, [allSymbols, getMultipleStockData])
+    loadData()
+  }, [])
 
-  // Load next page of data
-  const loadNextPage = useCallback(async () => {
-    if (loading) return
-
-    const start = page * PAGE_SIZE
-    const end = start + PAGE_SIZE
-    const symbolsToLoad = allSymbols.slice(start, end)
-
-    if (symbolsToLoad.length === 0) return
-
-    const newData = await getMultipleStockData(symbolsToLoad)
-    setTableData(prev => [...prev, ...newData])
-    setPage(prev => prev + 1)
-  }, [page, loading, allSymbols, getMultipleStockData])
-
-  // Apply sorting
-  const sortedData = useMemo(() => {
-    const sortableItems = [...tableData]
-    if (sortConfig.key) {
-      sortableItems.sort((a, b) => {
-        const aValue = a.technical[sortConfig.key]
-        const bValue = b.technical[sortConfig.key]
-
-        if (aValue < bValue) {
-          return sortConfig.direction === 'asc' ? -1 : 1
-        }
-        if (aValue > bValue) {
-          return sortConfig.direction === 'asc' ? 1 : -1
-        }
-        return 0
-      })
-    }
-    return sortableItems
-  }, [tableData, sortConfig])
-
-  // Apply filtering
   const filteredData = useMemo(() => {
-    return sortedData.filter(stock => {
-      return Object.entries(filters).every(([key, value]) => {
-        const stockValue = stock.technical[key]
-        if (typeof stockValue === 'number') {
-          return stockValue >= value.min && stockValue <= value.max
-        }
-        return stockValue.includes(value)
-      })
-    })
-  }, [sortedData, filters])
-
-  const handleRowClick = stock => {
-    setSelectedStock(stock)
-  }
-
-  const handleSort = key => {
-    setSortConfig({
-      key,
-      direction:
-        sortConfig.key === key && sortConfig.direction === 'asc'
-          ? 'desc'
-          : 'asc'
-    })
-  }
-
-  const handleFilterChange = (key, value) => {
-    setFilters(prev => ({
-      ...prev,
-      [key]: value
-    }))
-  }
-
-  if (initialLoading) {
-    return (
-      <div className='dashboard'>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            height: '100vh',
-            flexDirection: 'column'
-          }}
-        >
-          <h2>Loading Stock Data...</h2>
-          <ProgressBar
-            progress={0}
-            total={100}
-            message='Fetching data from GitHub...'
-          />
-        </div>
-      </div>
+    return technicalData.filter(stock =>
+      stock.symbol.toLowerCase().includes(search.toLowerCase())
     )
+  }, [technicalData, search])
+
+  const colorize = (value, maxAbs = 10) => {
+    if (value == null || isNaN(value)) return 'unset'
+
+    const ratio = Math.max(-1, Math.min(1, value / maxAbs))
+    const green = ratio > 0 ? Math.floor(80 + 100 * ratio) : 80
+    const red = ratio < 0 ? Math.floor(80 - 100 * ratio) : 80
+    const color = `rgb(${red}, ${green}, 80)`
+    return color
+  }
+
+  const getCellStyle = (value, atrPct) => {
+    const scale = atrPct || 5
+    return {
+      backgroundColor: colorize(value, scale),
+      color: '#fff'
+    }
   }
 
   return (
-    <div className='dashboard'>
-      <header className='header'>
-        <h1>Stock Screener</h1>
-        <div className='controls'>
-          <input
-            type='text'
-            placeholder='Filter stocks...'
-            onChange={e => handleFilterChange('symbol', e.target.value)}
-          />
-        </div>
-      </header>
+    <div className="dark-container">
+      <h1>📊 Technical Screener</h1>
 
-      <section className='top-contenders'>
-        <TopContenders stocks={topStocks} onSelect={setSelectedStock} />
-      </section>
+      <input
+        className="search-input"
+        placeholder="Search symbol..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+      />
 
-      <main className='main-content'>
-        <div className='table-container'>
-          <StockTable
-            data={filteredData}
-            onRowClick={handleRowClick}
-            onSort={handleSort}
-            sortConfig={sortConfig}
-            loadMore={loadNextPage}
-            hasMore={page * PAGE_SIZE < allSymbols.length}
-            isLoading={loading}
-            selectedStock={selectedStock}
-          />
-        </div>
+      {loading && <p>Loading data...</p>}
 
-        <div className='detail-panel'>
-          {selectedStock ? (
-            <StockChart stock={selectedStock} />
-          ) : (
-            <div className='placeholder'>
-              <p>Select a stock to view detailed analysis</p>
-            </div>
-          )}
-        </div>
-      </main>
+      <div className="scroll-container">
+        <table className="screener-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Close</th>
+              <th>Volume</th>
+              <th>ATR%</th>
+              <th>RSI</th>
+              <th>OB</th>
+              <th>OS</th>
+              <th>% to SMA50</th>
+              <th>MA Align</th>
+              <th>Stage</th>
+              <th>SMA5</th>
+              <th>5Δ%</th>
+              <th>SMA10</th>
+              <th>10Δ%</th>
+              <th>SMA20</th>
+              <th>20Δ%</th>
+              <th>SMA50</th>
+              <th>50Δ%</th>
+              <th>SMA100</th>
+              <th>100Δ%</th>
+              <th>SMA200</th>
+              <th>200Δ%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredData.map(stock => (
+              <tr key={stock.symbol}>
+                <td>{stock.symbol}</td>
+                <td>{stock.close ?? '-'}</td>
+                <td>{stock.volume}</td>
+                <td>{stock.atr_pct?.toFixed(2) ?? '-'}</td>
+                <td style={getCellStyle(stock.rsi_14 - 50, stock.atr_pct)}>
+                  {stock.rsi_14?.toFixed(2) ?? '-'}
+                </td>
+                <td>{stock.rsi_overbought}</td>
+                <td>{stock.rsi_oversold}</td>
+                <td style={getCellStyle(stock.price_vs_sma_50_pct, stock.atr_pct)}>
+                  {stock.price_vs_sma_50_pct?.toFixed(2) ?? '-'}
+                </td>
+                <td>{stock.ma_alignment || '-'}</td>
+                <td>{stock.market_stage || '-'}</td>
+
+                {/* SMA5 */}
+                <td>{stock.sma_5 ?? '-'}</td>
+                <td style={getCellStyle(stock.sma_5_diff_pct, stock.atr_pct)}>
+                  {stock.sma_5_diff_pct?.toFixed(2) ?? '-'}%
+                </td>
+
+                {/* SMA10 */}
+                <td>{stock.sma_10 ?? '-'}</td>
+                <td style={getCellStyle(stock.sma_10_diff_pct, stock.atr_pct)}>
+                  {stock.sma_10_diff_pct?.toFixed(2) ?? '-'}%
+                </td>
+
+                {/* SMA20 */}
+                <td>{stock.sma_20 ?? '-'}</td>
+                <td style={getCellStyle(stock.sma_20_diff_pct, stock.atr_pct)}>
+                  {stock.sma_20_diff_pct?.toFixed(2) ?? '-'}%
+                </td>
+
+                {/* SMA50 */}
+                <td>{stock.sma_50 ?? '-'}</td>
+                <td style={getCellStyle(stock.sma_50_diff_pct, stock.atr_pct)}>
+                  {stock.sma_50_diff_pct?.toFixed(2) ?? '-'}%
+                </td>
+
+                {/* SMA100 */}
+                <td>{stock.sma_100 ?? '-'}</td>
+                <td style={getCellStyle(stock.sma_100_diff_pct, stock.atr_pct)}>
+                  {stock.sma_100_diff_pct?.toFixed(2) ?? '-'}%
+                </td>
+
+                {/* SMA200 */}
+                <td>{stock.sma_200 ?? '-'}</td>
+                <td style={getCellStyle(stock.sma_200_diff_pct, stock.atr_pct)}>
+                  {stock.sma_200_diff_pct?.toFixed(2) ?? '-'}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
