@@ -12,6 +12,7 @@ import json
 import time
 from datetime import datetime
 import concurrent.futures
+import stat
 start_time = time.time()
 
 load_dotenv()
@@ -22,12 +23,16 @@ OUT_REPO = f"https://github.com/{os.getenv('_GITHUB_REPO')}.git"
 OUTPUT_REPO = os.getenv("_GITHUB_REPO")
 GITHUB_TOKEN = os.getenv('_GITHUB_TOKEN')
 BRANCH = os.getenv("_BRANCH_NAME", "main")
+COMBINED_STOCK_DIR = 'stock-repos-db'
+SUB_REPOS = [f'stock-db-{i}' for i in range(1, 8)]
 CLONE_REPO = True
 
 STOCK_DIR = 'stock-db'
 OUTPUT_DIR = 'stock-results'
 
-
+def force_remove_readonly(func, path, _):
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 def configure_git_identity(repo_path=STOCK_DIR, name=GIT_NAME, email=GIT_EMAIL):
     repo = Repo(repo_path)
     repo.config_writer().set_value("user", "name", name).release()
@@ -86,80 +91,95 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
     out_dir_0 = os.path.join(os.getcwd(), 'stock-results')
     OUTPUT_DIR1 = os.path.join(out_dir_0, 'technicals')
     os.makedirs(OUTPUT_DIR1, exist_ok=True)
+
     result = {}
     current_date = datetime.now().date()
     formatted_date = current_date.strftime("%Y-%m-%d")
     if not output_filename or output_filename == 'technical_indicators.json':
         output_filename = f"{formatted_date}_technical_indicators.json"
-    total_files = len(df_dict.items())##############################
+
+    total_files = len(df_dict.items())
     i = 0
+
+    sma_periods = [5, 10, 20, 50, 100, 200]
+
     for filename, df in df_dict.items():
-        
         required_cols = {'close', 'volume', 'high', 'low'}
         if df.empty or not required_cols.issubset(df.columns):
             print(f"[SKIP] DataFrame for {filename} is empty or missing columns: {required_cols - set(df.columns)}")
             continue
 
+        df = df.copy()
         closes = df['close']
         volume = df['volume']
         symbol = filename.replace('.csv', '')
 
-        sma_periods = [5, 10, 20, 50, 100, 200]
         for p in sma_periods:
-            df[f'sma_{p}'] = closes.rolling(window=p).mean()
-            df[f'sma_{p}_diff_pct'] = (df[f'sma_{p}'].fillna(method='pad').pct_change(fill_method=None)) * 100
+            df[f'sma_{p}'] = closes.rolling(window=p, min_periods=1).mean()
+            sma_diff = df[f'sma_{p}'].pct_change().fillna(0) * 100
+            df[f'sma_{p}_diff_pct'] = sma_diff
 
-        df['relative_volume'] = volume / volume.rolling(window=20).mean()
+        df['relative_volume'] = (volume / volume.rolling(window=20, min_periods=1).mean()).fillna(0)
 
-        def format_ma_alignment(row):
-            sma_values = {f'SMA_{p}': row[f'sma_{p}'] for p in sma_periods}
-            if any(pd.isna(val) for val in sma_values.values()):
-                return ''
-            sorted_labels = sorted(sma_values.items(), key=lambda x: -x[1])
-            return ' > '.join([label for label, _ in sorted_labels])
+        def compute_ma_ranks(row):
+            sma_values = {f'sma_{p}': row.get(f'sma_{p}', 0) for p in sma_periods}
+            ranked = sorted(sma_values.items(), key=lambda x: -x[1])
+            return {f"{label}_rank": rank+1 for rank, (label, _) in enumerate(ranked)}
 
-        df['ma_alignment'] = df.apply(format_ma_alignment, axis=1)
-        df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50']) * 100
+        ma_ranks_df = df.apply(compute_ma_ranks, axis=1)
+        ma_ranks_df = pd.DataFrame(ma_ranks_df.tolist())
+        df = pd.concat([df, ma_ranks_df], axis=1)
 
-        df['rsi_14'] = ta.rsi(closes, length=14)
+        df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50'].replace(0, pd.NA)).fillna(0) * 100
+
+        df['rsi_14'] = ta.rsi(closes, length=14).fillna(0)
         df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
         df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
 
-        df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-        df['atr_pct'] = (df['atr_14'] / df['close']) * 100
+        df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14).fillna(0)
+        df['atr_pct'] = (df['atr_14'] / df['close'].replace(0, pd.NA)).fillna(0) * 100
 
-        sma_200 = df['sma_200']
+        sma_200_diff = df['sma_200'].diff().fillna(0)
         df['market_stage'] = 'unknown'
-        df.loc[sma_200.diff() > 0, 'market_stage'] = 'uptrend'
-        df.loc[sma_200.diff() < 0, 'market_stage'] = 'downtrend'
+        df.loc[sma_200_diff > 0, 'market_stage'] = 'uptrend'
+        df.loc[sma_200_diff < 0, 'market_stage'] = 'downtrend'
 
-        
         if df.empty:
             print(f"[SKIP] DataFrame for {filename} is empty after calculations.")
             continue
 
-        last_row = df.iloc[-1]
+        indicators = [f'sma_{p}' for p in sma_periods] + ['rsi_14', 'atr_14']
+        valid_df = df.dropna(subset=indicators)
+        if valid_df.empty:
+            print(f"[WARN] No valid technical data for {symbol}")
+            continue
+        last_row = valid_df.iloc[-1]
         tech_data = {
-            'close': round(last_row['close'], 2),
-            'volume': int(last_row['volume']),
-            'relative_volume': round(last_row['relative_volume'], 2) if not pd.isna(last_row['relative_volume']) else None,
-            'ma_alignment': last_row['ma_alignment'],
-            'price_vs_sma_50_pct': round(last_row['price_vs_sma_50_pct'], 2) if not pd.isna(last_row['price_vs_sma_50_pct']) else None,
-            'rsi_14': round(last_row['rsi_14'], 2) if not pd.isna(last_row['rsi_14']) else None,
-            'rsi_overbought': int(last_row['rsi_overbought']) if not pd.isna(last_row['rsi_overbought']) else None,
-            'rsi_oversold': int(last_row['rsi_oversold']) if not pd.isna(last_row['rsi_oversold']) else None,
-            'atr_14': round(last_row['atr_14'], 2) if not pd.isna(last_row['atr_14']) else None,
-            'atr_pct': round(last_row['atr_pct'], 2) if not pd.isna(last_row['atr_pct']) else None,
-            'market_stage': last_row['market_stage']
+            'close': round(last_row['close'], 2) if pd.notna(last_row['close']) else 0,
+            'volume': int(last_row['volume']) if pd.notna(last_row['volume']) else 0,
+            'relative_volume': round(last_row['relative_volume'], 2) if pd.notna(last_row['relative_volume']) else 0,
+            'price_vs_sma_50_pct': round(last_row['price_vs_sma_50_pct'], 2) if pd.notna(last_row['price_vs_sma_50_pct']) else 0,
+            'rsi_14': round(last_row['rsi_14'], 2) if pd.notna(last_row['rsi_14']) else 0,
+            'rsi_overbought': int(last_row['rsi_overbought']) if pd.notna(last_row['rsi_overbought']) else 0,
+            'rsi_oversold': int(last_row['rsi_oversold']) if pd.notna(last_row['rsi_oversold']) else 0,
+            'atr_14': round(last_row['atr_14'], 2) if pd.notna(last_row['atr_14']) else 0,
+            'atr_pct': round(last_row['atr_pct'], 2) if pd.notna(last_row['atr_pct']) else 0,
+            'market_stage': last_row['market_stage'] if pd.notna(last_row['market_stage']) else "unknown"
         }
 
         for p in sma_periods:
-            tech_data[f'sma_{p}'] = round(last_row[f'sma_{p}'], 2) if not pd.isna(last_row[f'sma_{p}']) else None
-            tech_data[f'sma_{p}_diff_pct'] = round(last_row[f'sma_{p}_diff_pct'], 2) if not pd.isna(last_row[f'sma_{p}_diff_pct']) else None
+            if last_row.isna().any():
+                print(f"[WARN] Missing data for last row in {symbol}. Columns with NaNs: {last_row[last_row.isna()].index.tolist()}")
+            tech_data[f'sma_{p}'] = round(last_row[f'sma_{p}'], 2) if pd.notna(last_row[f'sma_{p}']) else 0
+            tech_data[f'sma_{p}_diff_pct'] = round(last_row[f'sma_{p}_diff_pct'], 2) if pd.notna(last_row[f'sma_{p}_diff_pct']) else 0
+
+        ma_values = {f'sma_{p}': last_row.get(f'sma_{p}', 0) for p in sma_periods}
+        sorted_ma = sorted(ma_values.items(), key=lambda x: -x[1])
+        tech_data['ma_alignment'] = {f'rank{rank + 1}': label for rank, (label, _) in enumerate(sorted_ma)}
 
         result[symbol] = tech_data
-        i+=1
-        print(f"[INFO] Added technicals for {symbol}. {i}/{total_files} done {(i/total_files)*100:.2f}%")######################
+        i += 1
+        print(f"[INFO] Added technicals for {symbol}. {i}/{total_files} done {(i/total_files)*100:.2f}%")
 
     output_path = os.path.join(OUTPUT_DIR1, output_filename)
     with open(output_path, 'w') as f:
@@ -281,12 +301,36 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
     with open(json_path, 'w') as f:
         json.dump(result, f, indent=4)
     print(f"[SAVED] {json_path}")
+def merge_stocklists(sub_repos, output_dir='stock-results', output_file='stocklist_by_repo.json'):
+    result = {}
+    for repo in sub_repos:
+        stocklist_path = os.path.join(repo, 'stocklist.json')
+        if os.path.exists(stocklist_path):
+            try:
+                with open(stocklist_path, 'r') as f:
+                    stocks = json.load(f)
+                if isinstance(stocks, list):
+                    result[repo] = stocks
+                else:
+                    print(f"[WARN] {repo}/stocklist.json is not a list, skipping.")
+            except Exception as e:
+                print(f"[ERROR] Failed to load {repo}/stocklist.json: {e}")
+        else:
+            print(f"[WARN] {repo}/stocklist.json not found")
 
-
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, output_file)
+    with open(output_path, 'w') as f:
+        json.dump(result, f, indent=4)
+    print(f"[SAVED] Combined stocklists to {output_path}")
+    
+GLOBAL_i = 0
 def process_single_stock(filename):
-    data_stock_dir = os.path.join(os.getcwd(), 'stock-db', 'data')
+    global GLOBAL_i
+    data_stock_dir = os.path.join(os.getcwd(), COMBINED_STOCK_DIR, 'data')
     filepath = os.path.join(data_stock_dir, filename)
-    print(f"\n[PROCESSING] {filename}")
+    GLOBAL_i +=1
+    print(f"\n[PROCESSING] {GLOBAL_i}. {filename}")
 
     if filename.endswith('.json'):
         with open(filepath, 'r') as jf:
@@ -318,7 +362,6 @@ def process_single_stock(filename):
     if 'volume' not in df.columns:
         df['volume'] = 0
 
-    # --- Levels and channel calculation ---
     levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
     df['sr_signal'] = sr_penetration_signal(df, levels)
     df['log_ret'] = np.log(df['close']).diff().shift(-1)
@@ -329,7 +372,7 @@ def process_single_stock(filename):
     return filename, df
 
 def process_all_stocks():
-    data_stock_dir = os.path.join(STOCK_DIR,'data')
+    data_stock_dir = os.path.join(COMBINED_STOCK_DIR, 'data')
     files = [
         f for f in os.listdir(data_stock_dir)
         if f.endswith('.json')
@@ -364,12 +407,29 @@ def safe_clone_or_pull(repo_url, path, branch="main"):
     print(f"[INFO] Cloning fresh from '{repo_url}' into '{path}'...")
     subprocess.run(["git", "clone", "-b", branch, repo_url, path], check=True)
     
+def combine_data_folders(sub_repos, combined_path):
+    os.makedirs(os.path.join(combined_path, 'data'), exist_ok=True)
+    for repo in sub_repos:
+        data_dir = os.path.join(repo, 'data')
+        if not os.path.exists(data_dir):
+            continue
+        for file in os.listdir(data_dir):
+            full_src = os.path.join(data_dir, file)
+            full_dst = os.path.join(combined_path, 'data', file)
+            if not os.path.exists(full_dst):
+                shutil.copy2(full_src, full_dst)
+                
 if CLONE_REPO:
-    safe_clone_or_pull(SOURCE_REPO, STOCK_DIR, BRANCH)
-    safe_clone_or_pull(OUT_REPO, OUTPUT_DIR, BRANCH)
+    for repo_name in SUB_REPOS:
+        repo_url = f"https://github.com/{os.getenv('_STOCK_DB_REPO_PREFIX')}-{repo_name.split('-')[-1]}.git"
+        safe_clone_or_pull(repo_url, repo_name, BRANCH)
+    combine_data_folders(SUB_REPOS, COMBINED_STOCK_DIR)
+    merge_stocklists(SUB_REPOS)
     configure_git_identity()
     set_remote_with_pat()
     process_all_stocks()
+    for repo in SUB_REPOS:
+        shutil.rmtree(repo, onerror=force_remove_readonly)
 
 elapsed_time = time.time() - start_time
 print(f"Done! Elapsed time: {elapsed_time:.2f} seconds")

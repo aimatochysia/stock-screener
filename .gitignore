@@ -61,7 +61,7 @@ rsconnect/
 
 # testing
 /coverage
-
+stock-repos-db/
 # production
 /build
 
