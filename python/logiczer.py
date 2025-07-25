@@ -27,12 +27,13 @@ COMBINED_STOCK_DIR = 'stock-repos-db'
 SUB_REPOS = [f'stock-db-{i}' for i in range(1, 8)]
 CLONE_REPO = True
 
-STOCK_DIR = 'stock-db'
+STOCK_DIR = 'stock-repos-db'
 OUTPUT_DIR = 'stock-results'
 
 def force_remove_readonly(func, path, _):
     os.chmod(path, stat.S_IWRITE)
     func(path)
+
 def configure_git_identity(repo_path=STOCK_DIR, name=GIT_NAME, email=GIT_EMAIL):
     repo = Repo(repo_path)
     repo.config_writer().set_value("user", "name", name).release()
@@ -47,13 +48,21 @@ def push_to_repo(repo_path, branch, filename):
     repo = Repo(repo_path)
     origin = repo.remote(name='origin')
     try:
+        repo.git.checkout(branch)
         origin.pull(branch)
     except Exception as e:
         print(f"[WARN] Pull failed: {e}")
+    
+    print("Git status before adding:")
+    print(repo.git.status())
+    
+    repo.git.add(all=True)
+    
+    print("Git status after adding:")
+    print(repo.git.status())
+    
     if repo.is_dirty(untracked_files=True):
-        repo.git.add(A=True)
         repo.index.commit(f"screened: {filename}")
-        origin = repo.remote(name='origin')
         origin.push(refspec=f"{branch}:{branch}")
         print(f"[PUSHED] Commit for {filename} pushed to {branch}")
     else:
@@ -362,13 +371,14 @@ def process_single_stock(filename):
     if 'volume' not in df.columns:
         df['volume'] = 0
 
-    levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
-    df['sr_signal'] = sr_penetration_signal(df, levels)
-    df['log_ret'] = np.log(df['close']).diff().shift(-1)
-    df['sr_return'] = df['sr_signal'] * df['log_ret']
+    #UNCOMMENT THIS
+    # levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
+    # df['sr_signal'] = sr_penetration_signal(df, levels)
+    # df['log_ret'] = np.log(df['close']).diff().shift(-1)
+    # df['sr_return'] = df['sr_signal'] * df['log_ret']
 
-    channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
-    save_sr_and_channel_data(df, levels, channel, filename)
+    # channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
+    # save_sr_and_channel_data(df, levels, channel, filename)
     return filename, df
 
 def process_all_stocks():
@@ -386,7 +396,7 @@ def process_all_stocks():
         if df is not None:
             df_dict[filename] = df
 
-    compute_technical_indicators_all(df_dict)
+    # compute_technical_indicators_all(df_dict) #UNCOMMENT
     push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename="all_stocks")
 
 
@@ -425,7 +435,8 @@ if CLONE_REPO:
         safe_clone_or_pull(repo_url, repo_name, BRANCH)
     combine_data_folders(SUB_REPOS, COMBINED_STOCK_DIR)
     merge_stocklists(SUB_REPOS)
-    configure_git_identity()
+    safe_clone_or_pull(OUT_REPO, OUTPUT_DIR, BRANCH)
+    configure_git_identity(repo_path=OUTPUT_DIR)
     set_remote_with_pat()
     process_all_stocks()
     for repo in SUB_REPOS:
