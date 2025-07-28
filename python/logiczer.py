@@ -201,6 +201,7 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
 
 
 def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.25):
+    lookback = min(120, len(df))
     atr = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=lookback)
     atr_series = atr.average_true_range()
     all_levels = [None] * len(data)
@@ -377,7 +378,6 @@ def process_single_stock(filename):
         df['volume'] = 0
 
     #UNCOMMENT THIS
-    lookback = min(120, len(df))
     levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
     df['sr_signal'] = sr_penetration_signal(df, levels)
     df['log_ret'] = np.log(df['close']).diff().shift(-1)
