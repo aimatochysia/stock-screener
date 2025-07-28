@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: '0 18 * * *' # 1 AM UTC+7
   workflow_dispatch:
+    inputs:
+      run_mode:
+        description: 'What to run'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - getter
+          - logiczer
 
 jobs:
   run-scripts:
@@ -24,6 +34,7 @@ jobs:
           pip install -r python/requirements.txt
 
       - name: Run getter.py
+        if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'getter' || github.event.inputs.run_mode == 'both'
         run: python python/getter.py
         env: 
           _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
@@ -33,7 +44,9 @@ jobs:
           GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
           GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
           _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
+
       - name: Run logiczer.py
+        if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'logiczer' || github.event.inputs.run_mode == 'both'
         run: python python/logiczer.py
         env: 
           _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
