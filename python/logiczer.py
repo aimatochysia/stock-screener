@@ -3,7 +3,6 @@ import numpy as np
 import scipy
 import math
 import pandas as pd
-import ft_pandas_ta as ta
 from dotenv import load_dotenv
 import subprocess
 import shutil
@@ -13,6 +12,8 @@ import time
 from datetime import datetime
 import concurrent.futures
 import stat
+from ta.momentum import RSIIndicator
+from ta.volatility import AverageTrueRange
 start_time = time.time()
 
 load_dotenv()
@@ -141,11 +142,13 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
 
         df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50'].replace(0, pd.NA)).fillna(0) * 100
 
-        df['rsi_14'] = ta.rsi(closes, length=14).fillna(0)
+        rsi = RSIIndicator(close=closes, window=14)
+        df['rsi_14'] = rsi.rsi().fillna(0)
         df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
         df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
 
-        df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14).fillna(0)
+        atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14)
+        df['atr_14'] = atr.average_true_range().fillna(0)
         df['atr_pct'] = (df['atr_14'] / df['close'].replace(0, pd.NA)).fillna(0) * 100
 
         sma_200_diff = df['sma_200'].diff().fillna(0)
@@ -198,13 +201,14 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
 
 
 def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.25):
-    atr = ta.atr(np.log(data['high']), np.log(data['low']), np.log(data['close']), lookback)
+    atr = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=lookback)
+    atr_series = atr.average_true_range()
     all_levels = [None] * len(data)
 
     for i in range(lookback, len(data)):
         i_start = i - lookback
         vals = np.log(data.iloc[i_start+1:i+1]['close'].to_numpy())
-        levels, *_ = find_levels(vals, atr.iloc[i], first_w, atr_mult, prom_thresh)
+        levels, *_ = find_levels(vals, atr_series.iloc[i], first_w, atr_mult, prom_thresh)
         all_levels[i] = levels
 
     return all_levels
@@ -235,7 +239,8 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
     closes = data['close'].values
     highs = data['high'].values
     lows = data['low'].values
-    atr_series = ta.atr(high=pd.Series(highs), low=pd.Series(lows), close=pd.Series(closes), length=window)
+    atr_indicator = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=window)
+    atr_series = atr_indicator.average_true_range()
     n = len(closes)
 
     for end in range(n, window - 1, -1):
