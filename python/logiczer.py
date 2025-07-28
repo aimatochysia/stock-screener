@@ -1,8 +1,8 @@
 import os
 import numpy as np
-import pandas as pd
 import scipy
 import math
+import pandas as pd
 import pandas_ta as ta
 from dotenv import load_dotenv
 import subprocess
@@ -52,22 +52,22 @@ def push_to_repo(repo_path, branch, filename):
         origin.pull(branch)
     except Exception as e:
         print(f"[WARN] Pull failed: {e}")
-    
+
     print("Git status before adding:")
     print(repo.git.status())
-    
+
     repo.git.add(all=True)
-    
+
     print("Git status after adding:")
     print(repo.git.status())
-    
+
     if repo.is_dirty(untracked_files=True):
         repo.index.commit(f"screened: {filename}")
         origin.push(refspec=f"{branch}:{branch}")
         print(f"[PUSHED] Commit for {filename} pushed to {branch}")
     else:
         print(f"[INFO] No changes to push for {filename}")
-        
+
 def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.1):
     if (
         len(price) == 0 or
@@ -332,7 +332,7 @@ def merge_stocklists(sub_repos, output_dir='stock-results', output_file='stockli
     with open(output_path, 'w') as f:
         json.dump(result, f, indent=4)
     print(f"[SAVED] Combined stocklists to {output_path}")
-    
+
 GLOBAL_i = 0
 def process_single_stock(filename):
     global GLOBAL_i
@@ -372,13 +372,13 @@ def process_single_stock(filename):
         df['volume'] = 0
 
     #UNCOMMENT THIS
-    # levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
-    # df['sr_signal'] = sr_penetration_signal(df, levels)
-    # df['log_ret'] = np.log(df['close']).diff().shift(-1)
-    # df['sr_return'] = df['sr_signal'] * df['log_ret']
+    levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
+    df['sr_signal'] = sr_penetration_signal(df, levels)
+    df['log_ret'] = np.log(df['close']).diff().shift(-1)
+    df['sr_return'] = df['sr_signal'] * df['log_ret']
 
-    # channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
-    # save_sr_and_channel_data(df, levels, channel, filename)
+    channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
+    save_sr_and_channel_data(df, levels, channel, filename)
     return filename, df
 
 def process_all_stocks():
@@ -396,7 +396,7 @@ def process_all_stocks():
         if df is not None:
             df_dict[filename] = df
 
-    # compute_technical_indicators_all(df_dict) #UNCOMMENT
+    compute_technical_indicators_all(df_dict) #UNCOMMENT
     push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename="all_stocks")
 
 
@@ -416,7 +416,7 @@ def safe_clone_or_pull(repo_url, path, branch="main"):
 
     print(f"[INFO] Cloning fresh from '{repo_url}' into '{path}'...")
     subprocess.run(["git", "clone", "-b", branch, repo_url, path], check=True)
-    
+
 def combine_data_folders(sub_repos, combined_path):
     os.makedirs(os.path.join(combined_path, 'data'), exist_ok=True)
     for repo in sub_repos:
@@ -428,10 +428,10 @@ def combine_data_folders(sub_repos, combined_path):
             full_dst = os.path.join(combined_path, 'data', file)
             if not os.path.exists(full_dst):
                 shutil.copy2(full_src, full_dst)
-                
+
 if CLONE_REPO:
     for repo_name in SUB_REPOS:
-        repo_url = f"https://github.com/{os.getenv('_STOCK_DB_REPO_PREFIX')}-{repo_name.split('-')[-1]}.git"
+        repo_url = f"https://github.com/aimatochysia/stock-db-{repo_name.split('-')[-1]}.git"
         safe_clone_or_pull(repo_url, repo_name, BRANCH)
     combine_data_folders(SUB_REPOS, COMBINED_STOCK_DIR)
     merge_stocklists(SUB_REPOS)
