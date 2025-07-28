@@ -377,6 +377,7 @@ def process_single_stock(filename):
         df['volume'] = 0
 
     #UNCOMMENT THIS
+    lookback = min(120, len(df))
     levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
     df['sr_signal'] = sr_penetration_signal(df, levels)
     df['log_ret'] = np.log(df['close']).diff().shift(-1)
