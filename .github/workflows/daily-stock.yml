@@ -25,6 +25,21 @@ jobs:
 
       - name: Run getter.py
         run: python python/getter.py
-
+        env: 
+          _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
+          _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
+          _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
+          _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
       - name: Run logiczer.py
         run: python python/logiczer.py
+        env: 
+          _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
+          _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
+          _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
+          _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
