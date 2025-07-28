@@ -3,7 +3,7 @@ import numpy as np
 import scipy
 import math
 import pandas as pd
-import pandas_ta as ta
+import ft_pandas_ta as ta
 from dotenv import load_dotenv
 import subprocess
 import shutil
