@@ -129,7 +129,8 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
             sma_diff = df[f'sma_{p}'].pct_change().fillna(0) * 100
             df[f'sma_{p}_diff_pct'] = sma_diff
 
-        df['relative_volume'] = (volume / volume.rolling(window=20, min_periods=1).mean()).fillna(0)
+        win1 = min(20, len(df))
+        df['relative_volume'] = (volume / volume.rolling(window=win1, min_periods=1).mean()).fillna(0)
 
         def compute_ma_ranks(row):
             sma_values = {f'sma_{p}': row.get(f'sma_{p}', 0) for p in sma_periods}
@@ -141,13 +142,13 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
         df = pd.concat([df, ma_ranks_df], axis=1)
 
         df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50'].replace(0, pd.NA)).fillna(0) * 100
-
-        rsi = RSIIndicator(close=closes, window=14)
+        win1 = min(14, len(df))
+        rsi = RSIIndicator(close=closes, window=win1)
         df['rsi_14'] = rsi.rsi().fillna(0)
         df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
         df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
-
-        atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14)
+        win1 = min(14, len(df))
+        atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=win1)
         df['atr_14'] = atr.average_true_range().fillna(0)
         df['atr_pct'] = (df['atr_14'] / df['close'].replace(0, pd.NA)).fillna(0) * 100
 
@@ -236,11 +237,11 @@ def sr_penetration_signal(data: pd.DataFrame, levels: list):
 def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, min_inside_frac=0.1, max_outliers=10):
     if len(data) < window:
         return None
-
+    win1 = min(120, len(data))
     closes = data['close'].values
     highs = data['high'].values
     lows = data['low'].values
-    atr_indicator = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=window)
+    atr_indicator = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=win1)
     atr_series = atr_indicator.average_true_range()
     n = len(closes)
 
@@ -382,8 +383,8 @@ def process_single_stock(filename):
     df['sr_signal'] = sr_penetration_signal(df, levels)
     df['log_ret'] = np.log(df['close']).diff().shift(-1)
     df['sr_return'] = df['sr_signal'] * df['log_ret']
-
-    channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
+    win1 = min(120, len(df))
+    channel = find_latest_dynamic_channel(df, window=win1, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
     save_sr_and_channel_data(df, levels, channel, filename)
     return filename, df
 
