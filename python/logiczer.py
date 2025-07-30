@@ -129,8 +129,8 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
             sma_diff = df[f'sma_{p}'].pct_change().fillna(0) * 100
             df[f'sma_{p}_diff_pct'] = sma_diff
 
-        win1 = min(20, len(df))
-        df['relative_volume'] = (volume / volume.rolling(window=win1, min_periods=1).mean()).fillna(0)
+        window = min(20, len(df))
+        df['relative_volume'] = (volume / volume.rolling(window=window, min_periods=1).mean()).fillna(0)
 
         def compute_ma_ranks(row):
             sma_values = {f'sma_{p}': row.get(f'sma_{p}', 0) for p in sma_periods}
@@ -142,13 +142,13 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
         df = pd.concat([df, ma_ranks_df], axis=1)
 
         df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50'].replace(0, pd.NA)).fillna(0) * 100
-        win1 = min(14, len(df))
-        rsi = RSIIndicator(close=closes, window=win1)
+        window = min(14, len(df))
+        rsi = RSIIndicator(close=closes, window=window)
         df['rsi_14'] = rsi.rsi().fillna(0)
         df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
         df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
-        win1 = min(14, len(df))
-        atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=win1)
+        window = min(14, len(df))
+        atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=window)
         df['atr_14'] = atr.average_true_range().fillna(0)
         df['atr_pct'] = (df['atr_14'] / df['close'].replace(0, pd.NA)).fillna(0) * 100
 
@@ -235,23 +235,23 @@ def sr_penetration_signal(data: pd.DataFrame, levels: list):
 
 
 def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, min_inside_frac=0.1, max_outliers=10):
+    window = min(120,len(data))
     if len(data) < window:
         return None
-    win1 = min(120, len(data))
     closes = data['close'].values
     highs = data['high'].values
     lows = data['low'].values
-    atr_indicator = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=win1)
+    atr_indicator = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=window)
     atr_series = atr_indicator.average_true_range()
     n = len(closes)
 
     for end in range(n, window - 1, -1):
         start = end - window
-        x = np.arange(window)
         seg_close = closes[start:end]
         seg_high = highs[start:end]
         seg_low = lows[start:end]
 
+        # Skip if ATR not available or invalid
         if end - 1 >= len(atr_series):
             continue
 
@@ -259,17 +259,33 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
         if pd.isna(atr) or atr == 0:
             continue
 
-        tol = atr * tol_mult
+        # Remove NaNs consistently
+        mask = ~np.isnan(seg_close) & ~np.isnan(seg_high) & ~np.isnan(seg_low)
+        if np.sum(mask) < 2:
+            continue
 
-        slope, intercept = np.polyfit(x, seg_close, 1)
+        seg_close = seg_close[mask]
+        seg_high = seg_high[mask]
+        seg_low = seg_low[mask]
+        x = np.arange(len(seg_close))
+
+        if len(seg_close) < 2 or np.std(seg_close) == 0:
+            continue
+
+        try:
+            slope, intercept = np.polyfit(x, seg_close, 1)
+        except np.linalg.LinAlgError:
+            continue
+
         trend_line = slope * x + intercept
+        tol = atr * tol_mult
         upper_line = trend_line + tol
         lower_line = trend_line - tol
 
         inside = np.sum((seg_high <= upper_line) & (seg_low >= lower_line))
-        outside = window - inside
+        outside = len(seg_close) - inside
 
-        if inside >= int(min_inside_frac * window) and outside <= max_outliers:
+        if inside >= int(min_inside_frac * len(seg_close)) and outside <= max_outliers:
             return {
                 'start_idx': start,
                 'end_idx': end,
@@ -281,7 +297,9 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
                 'intercept': intercept,
                 'tol': tol
             }
+
     return None
+
 
 
 def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, filename: str):
@@ -383,8 +401,8 @@ def process_single_stock(filename):
     df['sr_signal'] = sr_penetration_signal(df, levels)
     df['log_ret'] = np.log(df['close']).diff().shift(-1)
     df['sr_return'] = df['sr_signal'] * df['log_ret']
-    win1 = min(120, len(df))
-    channel = find_latest_dynamic_channel(df, window=win1, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
+    window = min(120, len(df))
+    channel = find_latest_dynamic_channel(df, window=window, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
     save_sr_and_channel_data(df, levels, channel, filename)
     return filename, df
 
