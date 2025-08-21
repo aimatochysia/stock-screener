@@ -306,7 +306,8 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
     os.makedirs(os.path.join(OUTPUT_DIR, "l_and_c"), exist_ok=True)
     result = {}
     channel_level_path = os.path.join(OUTPUT_DIR, "l_and_c")
-    latest_levels = [lvl for lvl in levels if lvl is not None]
+
+    latest_levels = [lvl for lvl in levels if lvl is not None and len(lvl) > 0]
     if latest_levels:
         last_levels = sorted(set(round(float(lvl), 2) for lvl in latest_levels[-1]))
         result['latest_levels'] = last_levels
@@ -335,6 +336,7 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
     with open(json_path, 'w') as f:
         json.dump(result, f, indent=4)
     print(f"[SAVED] {json_path}")
+
 def merge_stocklists(sub_repos, output_dir='stock-results', output_file='stocklist_by_repo.json'):
     result = {}
     for repo in sub_repos:
