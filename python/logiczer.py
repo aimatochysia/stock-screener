@@ -69,30 +69,36 @@ def push_to_repo(repo_path, branch, filename):
     else:
         print(f"[INFO] No changes to push for {filename}")
 
-def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.1):
+def find_levels(price: np.array, log_atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.05):
     if (
         len(price) == 0 or
-        np.isnan(atr) or atr <= 0 or
+        np.isnan(log_atr) or log_atr <= 0 or
         np.all(price == price[0])
     ):
         return [], [], {}, np.array([]), np.array([]), np.array([])
+
     last_w = 1.0
     w_step = (last_w - first_w) / len(price)
 
     weights = first_w + np.arange(len(price)) * w_step
     weights[weights < 0] = 0.0
-    kernel = scipy.stats.gaussian_kde(price, bw_method=atr * atr_mult, weights=weights)
+
+    kernel = scipy.stats.gaussian_kde(price, bw_method=log_atr * atr_mult, weights=weights)
     min_v, max_v = np.min(price), np.max(price)
     if min_v == max_v:
         return [], [], {}, np.array([]), np.array([]), np.array([])
+
     step = (max_v - min_v) / 200
     if step <= 0 or not np.isfinite(step):
         return [], [], {}, np.array([]), np.array([]), np.array([])
+
     price_range = np.arange(min_v, max_v, step)
     pdf = kernel(price_range)
     prom_min = np.max(pdf) * prom_thresh
 
+    prom_min = np.max(pdf) * prom_thresh
     peaks, props = scipy.signal.find_peaks(pdf, prominence=prom_min)
+
     levels = [np.exp(price_range[peak]) for peak in peaks]
 
     return levels, peaks, props, price_range, pdf, weights
@@ -201,8 +207,8 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
     print(f"[SAVED] All technical indicators to {output_path}")
 
 
-def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.25):
-    lookback = min(120, len(data))
+def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.05):
+    lookback = min(500, len(data))
     atr = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=lookback)
     atr_series = atr.average_true_range()
     all_levels = [None] * len(data)
@@ -210,7 +216,9 @@ def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, a
     for i in range(lookback, len(data)):
         i_start = i - lookback
         vals = np.log(data.iloc[i_start+1:i+1]['close'].to_numpy())
-        levels, *_ = find_levels(vals, atr_series.iloc[i], first_w, atr_mult, prom_thresh)
+
+        log_atr = atr_series.iloc[i] / data.iloc[i]['close']
+        levels, *_ = find_levels(vals, log_atr, first_w, atr_mult, prom_thresh)
         all_levels[i] = levels
 
     return all_levels
@@ -251,7 +259,6 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
         seg_high = highs[start:end]
         seg_low = lows[start:end]
 
-        # Skip if ATR not available or invalid
         if end - 1 >= len(atr_series):
             continue
 
@@ -259,7 +266,6 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
         if pd.isna(atr) or atr == 0:
             continue
 
-        # Remove NaNs consistently
         mask = ~np.isnan(seg_close) & ~np.isnan(seg_high) & ~np.isnan(seg_low)
         if np.sum(mask) < 2:
             continue
@@ -398,7 +404,6 @@ def process_single_stock(filename):
     if 'volume' not in df.columns:
         df['volume'] = 0
 
-    #UNCOMMENT THIS
     levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
     df['sr_signal'] = sr_penetration_signal(df, levels)
     df['log_ret'] = np.log(df['close']).diff().shift(-1)
@@ -423,7 +428,7 @@ def process_all_stocks():
         if df is not None:
             df_dict[filename] = df
 
-    compute_technical_indicators_all(df_dict) #UNCOMMENT
+    compute_technical_indicators_all(df_dict) 
     push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename="all_stocks")
 
 
