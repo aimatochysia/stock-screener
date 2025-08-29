@@ -119,7 +119,7 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
 
     sma_periods = [5, 10, 20, 50, 100, 200]
 
-    for filename, df in df_dict.items():
+    for filename, (df, repo_name) in df_dict.items():
         required_cols = {'close', 'volume', 'high', 'low'}
         if df.empty or not required_cols.issubset(df.columns):
             print(f"[SKIP] DataFrame for {filename} is empty or missing columns: {required_cols - set(df.columns)}")
@@ -174,6 +174,7 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
             continue
         last_row = valid_df.iloc[-1]
         tech_data = {
+            "db": repo_name,
             'close': round(last_row['close'], 2) if pd.notna(last_row['close']) else 0,
             'volume': int(last_row['volume']) if pd.notna(last_row['volume']) else 0,
             'relative_volume': round(last_row['relative_volume'], 2) if pd.notna(last_row['relative_volume']) else 0,
@@ -413,7 +414,7 @@ def process_single_stock(filename):
     save_sr_and_channel_data(df, levels, channel, filename)
     return filename, df
 
-def process_all_stocks():
+def process_all_stocks(file_repo_map):
     data_stock_dir = os.path.join(COMBINED_STOCK_DIR, 'data')
     files = [
         f for f in os.listdir(data_stock_dir)
@@ -426,9 +427,8 @@ def process_all_stocks():
         results = list(executor.map(process_single_stock, files))
     for filename, df in results:
         if df is not None:
-            df_dict[filename] = df
-
-    compute_technical_indicators_all(df_dict) 
+            df_dict[filename] = (df, file_repo_map.get(filename, "unknown"))
+    compute_technical_indicators_all(df_dict)
     push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename="all_stocks")
 
 
@@ -451,6 +451,7 @@ def safe_clone_or_pull(repo_url, path, branch="main"):
 
 def combine_data_folders(sub_repos, combined_path):
     os.makedirs(os.path.join(combined_path, 'data'), exist_ok=True)
+    file_repo_map = {}
     for repo in sub_repos:
         data_dir = os.path.join(repo, 'data')
         if not os.path.exists(data_dir):
@@ -460,17 +461,19 @@ def combine_data_folders(sub_repos, combined_path):
             full_dst = os.path.join(combined_path, 'data', file)
             if not os.path.exists(full_dst):
                 shutil.copy2(full_src, full_dst)
+            file_repo_map[file] = repo
+    return file_repo_map
 
 if CLONE_REPO:
     for repo_name in SUB_REPOS:
         repo_url = f"https://github.com/aimatochysia/stock-db-{repo_name.split('-')[-1]}.git"
         safe_clone_or_pull(repo_url, repo_name, BRANCH)
-    combine_data_folders(SUB_REPOS, COMBINED_STOCK_DIR)
+    file_repo_map = combine_data_folders(SUB_REPOS, COMBINED_STOCK_DIR)
     merge_stocklists(SUB_REPOS)
     safe_clone_or_pull(OUT_REPO, OUTPUT_DIR, BRANCH)
     configure_git_identity(repo_path=OUTPUT_DIR)
     set_remote_with_pat()
-    process_all_stocks()
+    process_all_stocks(file_repo_map)
     for repo in SUB_REPOS:
         shutil.rmtree(repo, onerror=force_remove_readonly)
 
