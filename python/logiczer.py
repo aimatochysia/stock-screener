@@ -112,7 +112,7 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
     current_date = datetime.now().date()
     formatted_date = current_date.strftime("%Y-%m-%d")
     if not output_filename or output_filename == 'technical_indicators.json':
-        output_filename = f"{formatted_date}_technical_indicators.json"
+        output_filename = f"technical_indicators.json"
 
     total_files = len(df_dict.items())
     i = 0
