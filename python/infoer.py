@@ -148,7 +148,7 @@ def save_all_stock_info(file_repo_map, output_repo=OUTPUT_REPO, branch=BRANCH):
         if stock_info:
             merged_info[ticker] = stock_info
             print(f"[INFO] Added {ticker} to merged info.json")
-        # time.sleep(random.randint(0, 1))
+        time.sleep(random.randint(0, 1))
 
     merged_path = os.path.join(info_dir, "info.json")
     with open(merged_path, "w") as f:
