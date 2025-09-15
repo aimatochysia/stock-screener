@@ -14,6 +14,7 @@ on:
           - both
           - getter
           - logiczer
+          - infoer
 
 jobs:
   run-scripts:
@@ -36,6 +37,18 @@ jobs:
       - name: Run getter.py
         if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'getter' || github.event.inputs.run_mode == 'both'
         run: python python/getter.py
+        env: 
+          _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
+          _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
+          _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
+          _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
+
+      - name: Run infoer.py
+        if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'infoer' || github.event.inputs.run_mode == 'both'
+        run: python python/infoer.py
         env: 
           _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
           _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
