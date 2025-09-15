@@ -152,19 +152,15 @@ def save_all_stock_info(file_repo_map, output_repo=OUTPUT_REPO, branch=BRANCH):
         stock_info = fetch_stock_info(ticker)
         if stock_info:
             merged_info[ticker] = stock_info
-            # Save per-ticker file
             output_path = os.path.join(info_dir, f"{ticker}.json")
             with open(output_path, "w") as f:
                 json.dump(stock_info, f, indent=4)
             print(f"[SAVED] {ticker} info -> {output_path}")
 
-    # Save merged info.json
     merged_path = os.path.join(info_dir, "info.json")
     with open(merged_path, "w") as f:
         json.dump(merged_info, f, indent=4)
     print(f"[SAVED] Merged stock infos -> {merged_path}")
-
-    # Push all changes
     push_to_repo(repo_path=output_repo, branch=branch, filename="stock_infos")
 
 
