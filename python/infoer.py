@@ -3,7 +3,6 @@ import time
 import shutil
 import subprocess
 import json
-import concurrent.futures
 import yfinance as yf
 from dotenv import load_dotenv
 from git import Repo, InvalidGitRepositoryError, GitCommandError
@@ -119,23 +118,6 @@ def merge_stocklists(sub_repos, output_dir='stock-results', output_file='stockli
     print(f"[SAVED] Combined stocklists to {output_path}")
 
 
-def process_all_stocks(file_repo_map):
-    data_stock_dir = os.path.join(COMBINED_STOCK_DIR, 'data')
-    files = [
-        f for f in os.listdir(data_stock_dir)
-        if f.endswith('.json')
-        and not f.endswith('_levels.csv')
-        and not f.endswith('_channel.csv')
-    ]
-    df_dict = {}
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(process_single_stock, files))
-    for filename, df in results:
-        if df is not None:
-            df_dict[filename] = (df, file_repo_map.get(filename, "unknown"))
-    push_to_repo(repo_path=OUTPUT_REPO, branch=BRANCH, filename="all_stocks")
-
-
 SELECTED_FIELDS = [
     "forwardPE",
     "dividendYield",
@@ -195,5 +177,4 @@ if CLONE_REPO:
     safe_clone_or_pull(OUT_REPO, OUTPUT_REPO, BRANCH)
     configure_git_identity(repo_path=OUTPUT_REPO)
     set_remote_with_pat()
-    process_all_stocks(file_repo_map)
     save_all_stock_info(file_repo_map)
