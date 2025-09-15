@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import json
 import yfinance as yf
+import random
 from dotenv import load_dotenv
 from git import Repo, InvalidGitRepositoryError, GitCommandError
 
@@ -62,13 +63,7 @@ def push_to_repo(repo_path, branch, filename):
     except Exception as e:
         print(f"[WARN] Pull failed: {e}")
 
-    print("Git status before adding:")
-    print(repo.git.status())
-
     repo.git.add(all=True)
-
-    print("Git status after adding:")
-    print(repo.git.status())
 
     if repo.is_dirty(untracked_files=True):
         repo.index.commit(f"screened: {filename}")
@@ -152,15 +147,14 @@ def save_all_stock_info(file_repo_map, output_repo=OUTPUT_REPO, branch=BRANCH):
         stock_info = fetch_stock_info(ticker)
         if stock_info:
             merged_info[ticker] = stock_info
-            output_path = os.path.join(info_dir, f"{ticker}.json")
-            with open(output_path, "w") as f:
-                json.dump(stock_info, f, indent=4)
-            print(f"[SAVED] {ticker} info -> {output_path}")
+            print(f"[INFO] Added {ticker} to merged info.json")
+        # time.sleep(random.randint(0, 1))
 
     merged_path = os.path.join(info_dir, "info.json")
     with open(merged_path, "w") as f:
         json.dump(merged_info, f, indent=4)
     print(f"[SAVED] Merged stock infos -> {merged_path}")
+
     push_to_repo(repo_path=output_repo, branch=branch, filename="stock_infos")
 
 
