@@ -10,6 +10,12 @@ The Stock Screener operates as a distributed system with automated data pipeline
 
 ---
 
+## 🟢 Access
+
+To view the webpage resulted from this repo and other repo connected by this project, visit [HERE](https://screenid.vercel.app)
+
+---
+
 ## 🧱 System Architecture
 
 The architecture follows a producer-consumer pattern, where backend Python scripts collect and process stock data, storing results across multiple GitHub repositories that serve as a distributed data layer for the frontend React application.
