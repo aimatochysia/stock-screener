@@ -2,19 +2,16 @@
 
 A web-based stock screening system designed for the Jakarta Stock Exchange (JKSE). It automates daily data collection, performs technical analysis, and presents the results through an interactive frontend.
 
----
 
 ## 📌 Overview
 
 The Stock Screener operates as a distributed system with automated data pipelines, multi-repository data storage, and a modern React frontend. It processes approximately 1,000 JKSE stocks daily, providing users with comprehensive financial and technical insights.
 
----
 
 ## 🟢 Access
 
 To view the webpage resulted from this repo and other repo connected by this project, visit [HERE](https://screenid.vercel.app)
 
----
 
 ## 🧱 System Architecture
 
@@ -30,7 +27,6 @@ The architecture follows a producer-consumer pattern, where backend Python scrip
 - **Data Storage**: Distributed across 7 `stock-db-*` repositories and a `stock-results` repository.
 - **Frontend Interface**: Built with React.js and hosted on Vercel, providing interactive stock screening and visualization.
 
----
 
 ## 🔄 Data Processing Pipeline
 
@@ -39,7 +35,6 @@ The system implements a sequential three-stage pipeline executed daily via GitHu
 2. **Aggregation (`infoer.py`)**: Consolidates data and enriches it with stock metadata and company information.
 3. **Analysis (`logiczer.py`)**: Computes technical indicators, support/resistance levels, and generates trading signals.
 
----
 
 ## ⚙️ Technology Stack
 
@@ -57,7 +52,6 @@ The system implements a sequential three-stage pipeline executed daily via GitHu
 - **Data Fetching**: Custom `useStockData` hook for API integration.
 - **UI Components**: `StockTable` with infinite scrolling, `StockChart` with technical indicators.
 
----
 
 ## 🚀 Getting Started
 
