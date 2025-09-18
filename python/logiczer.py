@@ -69,30 +69,36 @@ def push_to_repo(repo_path, branch, filename):
     else:
         print(f"[INFO] No changes to push for {filename}")
 
-def find_levels(price: np.array, atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.1):
+def find_levels(price: np.array, log_atr: float, first_w=0.1, atr_mult=3.0, prom_thresh=0.05):
     if (
         len(price) == 0 or
-        np.isnan(atr) or atr <= 0 or
+        np.isnan(log_atr) or log_atr <= 0 or
         np.all(price == price[0])
     ):
         return [], [], {}, np.array([]), np.array([]), np.array([])
+
     last_w = 1.0
     w_step = (last_w - first_w) / len(price)
 
     weights = first_w + np.arange(len(price)) * w_step
     weights[weights < 0] = 0.0
-    kernel = scipy.stats.gaussian_kde(price, bw_method=atr * atr_mult, weights=weights)
+
+    kernel = scipy.stats.gaussian_kde(price, bw_method=log_atr * atr_mult, weights=weights)
     min_v, max_v = np.min(price), np.max(price)
     if min_v == max_v:
         return [], [], {}, np.array([]), np.array([]), np.array([])
+
     step = (max_v - min_v) / 200
     if step <= 0 or not np.isfinite(step):
         return [], [], {}, np.array([]), np.array([]), np.array([])
+
     price_range = np.arange(min_v, max_v, step)
     pdf = kernel(price_range)
     prom_min = np.max(pdf) * prom_thresh
 
+    prom_min = np.max(pdf) * prom_thresh
     peaks, props = scipy.signal.find_peaks(pdf, prominence=prom_min)
+
     levels = [np.exp(price_range[peak]) for peak in peaks]
 
     return levels, peaks, props, price_range, pdf, weights
@@ -106,14 +112,14 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
     current_date = datetime.now().date()
     formatted_date = current_date.strftime("%Y-%m-%d")
     if not output_filename or output_filename == 'technical_indicators.json':
-        output_filename = f"{formatted_date}_technical_indicators.json"
+        output_filename = f"technical_indicators.json"
 
     total_files = len(df_dict.items())
     i = 0
 
     sma_periods = [5, 10, 20, 50, 100, 200]
 
-    for filename, df in df_dict.items():
+    for filename, (df, repo_name) in df_dict.items():
         required_cols = {'close', 'volume', 'high', 'low'}
         if df.empty or not required_cols.issubset(df.columns):
             print(f"[SKIP] DataFrame for {filename} is empty or missing columns: {required_cols - set(df.columns)}")
@@ -129,7 +135,8 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
             sma_diff = df[f'sma_{p}'].pct_change().fillna(0) * 100
             df[f'sma_{p}_diff_pct'] = sma_diff
 
-        df['relative_volume'] = (volume / volume.rolling(window=20, min_periods=1).mean()).fillna(0)
+        window = min(20, len(df))
+        df['relative_volume'] = (volume / volume.rolling(window=window, min_periods=1).mean()).fillna(0)
 
         def compute_ma_ranks(row):
             sma_values = {f'sma_{p}': row.get(f'sma_{p}', 0) for p in sma_periods}
@@ -141,13 +148,13 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
         df = pd.concat([df, ma_ranks_df], axis=1)
 
         df['price_vs_sma_50_pct'] = ((df['close'] - df['sma_50']) / df['sma_50'].replace(0, pd.NA)).fillna(0) * 100
-
-        rsi = RSIIndicator(close=closes, window=14)
+        window = min(14, len(df))
+        rsi = RSIIndicator(close=closes, window=window)
         df['rsi_14'] = rsi.rsi().fillna(0)
         df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
         df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
-
-        atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14)
+        window = min(14, len(df))
+        atr = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=window)
         df['atr_14'] = atr.average_true_range().fillna(0)
         df['atr_pct'] = (df['atr_14'] / df['close'].replace(0, pd.NA)).fillna(0) * 100
 
@@ -167,6 +174,7 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
             continue
         last_row = valid_df.iloc[-1]
         tech_data = {
+            "db": repo_name,
             'close': round(last_row['close'], 2) if pd.notna(last_row['close']) else 0,
             'volume': int(last_row['volume']) if pd.notna(last_row['volume']) else 0,
             'relative_volume': round(last_row['relative_volume'], 2) if pd.notna(last_row['relative_volume']) else 0,
@@ -200,8 +208,8 @@ def compute_technical_indicators_all(df_dict: dict, output_filename: str = 'tech
     print(f"[SAVED] All technical indicators to {output_path}")
 
 
-def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.25):
-    lookback = min(120, len(data))
+def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, atr_mult=3.0, prom_thresh=0.05):
+    lookback = min(500, len(data))
     atr = AverageTrueRange(high=data['high'], low=data['low'], close=data['close'], window=lookback)
     atr_series = atr.average_true_range()
     all_levels = [None] * len(data)
@@ -209,7 +217,9 @@ def support_resistance_levels(data: pd.DataFrame, lookback: int, first_w=0.01, a
     for i in range(lookback, len(data)):
         i_start = i - lookback
         vals = np.log(data.iloc[i_start+1:i+1]['close'].to_numpy())
-        levels, *_ = find_levels(vals, atr_series.iloc[i], first_w, atr_mult, prom_thresh)
+
+        log_atr = atr_series.iloc[i] / data.iloc[i]['close']
+        levels, *_ = find_levels(vals, log_atr, first_w, atr_mult, prom_thresh)
         all_levels[i] = levels
 
     return all_levels
@@ -234,9 +244,9 @@ def sr_penetration_signal(data: pd.DataFrame, levels: list):
 
 
 def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, min_inside_frac=0.1, max_outliers=10):
+    window = min(120,len(data))
     if len(data) < window:
         return None
-
     closes = data['close'].values
     highs = data['high'].values
     lows = data['low'].values
@@ -246,7 +256,6 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
 
     for end in range(n, window - 1, -1):
         start = end - window
-        x = np.arange(window)
         seg_close = closes[start:end]
         seg_high = highs[start:end]
         seg_low = lows[start:end]
@@ -258,17 +267,32 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
         if pd.isna(atr) or atr == 0:
             continue
 
-        tol = atr * tol_mult
+        mask = ~np.isnan(seg_close) & ~np.isnan(seg_high) & ~np.isnan(seg_low)
+        if np.sum(mask) < 2:
+            continue
 
-        slope, intercept = np.polyfit(x, seg_close, 1)
+        seg_close = seg_close[mask]
+        seg_high = seg_high[mask]
+        seg_low = seg_low[mask]
+        x = np.arange(len(seg_close))
+
+        if len(seg_close) < 2 or np.std(seg_close) == 0:
+            continue
+
+        try:
+            slope, intercept = np.polyfit(x, seg_close, 1)
+        except np.linalg.LinAlgError:
+            continue
+
         trend_line = slope * x + intercept
+        tol = atr * tol_mult
         upper_line = trend_line + tol
         lower_line = trend_line - tol
 
         inside = np.sum((seg_high <= upper_line) & (seg_low >= lower_line))
-        outside = window - inside
+        outside = len(seg_close) - inside
 
-        if inside >= int(min_inside_frac * window) and outside <= max_outliers:
+        if inside >= int(min_inside_frac * len(seg_close)) and outside <= max_outliers:
             return {
                 'start_idx': start,
                 'end_idx': end,
@@ -280,14 +304,17 @@ def find_latest_dynamic_channel(data: pd.DataFrame, window=120, tol_mult=1.0, mi
                 'intercept': intercept,
                 'tol': tol
             }
+
     return None
+
 
 
 def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, filename: str):
     os.makedirs(os.path.join(OUTPUT_DIR, "l_and_c"), exist_ok=True)
     result = {}
     channel_level_path = os.path.join(OUTPUT_DIR, "l_and_c")
-    latest_levels = [lvl for lvl in levels if lvl is not None]
+
+    latest_levels = [lvl for lvl in levels if lvl is not None and len(lvl) > 0]
     if latest_levels:
         last_levels = sorted(set(round(float(lvl), 2) for lvl in latest_levels[-1]))
         result['latest_levels'] = last_levels
@@ -316,6 +343,7 @@ def save_sr_and_channel_data(data: pd.DataFrame, levels: list, channel: dict, fi
     with open(json_path, 'w') as f:
         json.dump(result, f, indent=4)
     print(f"[SAVED] {json_path}")
+
 def merge_stocklists(sub_repos, output_dir='stock-results', output_file='stocklist_by_repo.json'):
     result = {}
     for repo in sub_repos:
@@ -377,17 +405,16 @@ def process_single_stock(filename):
     if 'volume' not in df.columns:
         df['volume'] = 0
 
-    #UNCOMMENT THIS
     levels = support_resistance_levels(df, lookback=120, first_w=1.0, atr_mult=3.0)
     df['sr_signal'] = sr_penetration_signal(df, levels)
     df['log_ret'] = np.log(df['close']).diff().shift(-1)
     df['sr_return'] = df['sr_signal'] * df['log_ret']
-
-    channel = find_latest_dynamic_channel(df, window=120, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
+    window = min(120, len(df))
+    channel = find_latest_dynamic_channel(df, window=window, tol_mult=2.0, min_inside_frac=0.1, max_outliers=1000)
     save_sr_and_channel_data(df, levels, channel, filename)
     return filename, df
 
-def process_all_stocks():
+def process_all_stocks(file_repo_map):
     data_stock_dir = os.path.join(COMBINED_STOCK_DIR, 'data')
     files = [
         f for f in os.listdir(data_stock_dir)
@@ -400,9 +427,8 @@ def process_all_stocks():
         results = list(executor.map(process_single_stock, files))
     for filename, df in results:
         if df is not None:
-            df_dict[filename] = df
-
-    compute_technical_indicators_all(df_dict) #UNCOMMENT
+            df_dict[filename] = (df, file_repo_map.get(filename, "unknown"))
+    compute_technical_indicators_all(df_dict)
     push_to_repo(repo_path=OUTPUT_DIR, branch=BRANCH, filename="all_stocks")
 
 
@@ -425,6 +451,7 @@ def safe_clone_or_pull(repo_url, path, branch="main"):
 
 def combine_data_folders(sub_repos, combined_path):
     os.makedirs(os.path.join(combined_path, 'data'), exist_ok=True)
+    file_repo_map = {}
     for repo in sub_repos:
         data_dir = os.path.join(repo, 'data')
         if not os.path.exists(data_dir):
@@ -434,17 +461,19 @@ def combine_data_folders(sub_repos, combined_path):
             full_dst = os.path.join(combined_path, 'data', file)
             if not os.path.exists(full_dst):
                 shutil.copy2(full_src, full_dst)
+            file_repo_map[file] = repo
+    return file_repo_map
 
 if CLONE_REPO:
     for repo_name in SUB_REPOS:
         repo_url = f"https://github.com/aimatochysia/stock-db-{repo_name.split('-')[-1]}.git"
         safe_clone_or_pull(repo_url, repo_name, BRANCH)
-    combine_data_folders(SUB_REPOS, COMBINED_STOCK_DIR)
+    file_repo_map = combine_data_folders(SUB_REPOS, COMBINED_STOCK_DIR)
     merge_stocklists(SUB_REPOS)
     safe_clone_or_pull(OUT_REPO, OUTPUT_DIR, BRANCH)
     configure_git_identity(repo_path=OUTPUT_DIR)
     set_remote_with_pat()
-    process_all_stocks()
+    process_all_stocks(file_repo_map)
     for repo in SUB_REPOS:
         shutil.rmtree(repo, onerror=force_remove_readonly)
 

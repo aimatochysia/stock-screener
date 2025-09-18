@@ -1,58 +1,71 @@
-# name: Daily Stock Run
+name: Daily Stock Run
 
-# on:
-#   schedule:
-#     - cron: '0 18 * * *' # 1 AM UTC+7
-#   workflow_dispatch:
-#     inputs:
-#       run_mode:
-#         description: 'What to run'
-#         required: false
-#         default: 'both'
-#         type: choice
-#         options:
-#           - both
-#           - getter
-#           - logiczer
+on:
+  schedule:
+    - cron: '0 18 * * *' # 1 AM UTC+7
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: 'What to run'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - getter
+          - logiczer
+          - infoer
 
-# jobs:
-#   run-scripts:
-#     runs-on: ubuntu-latest
+jobs:
+  run-scripts:
+    runs-on: ubuntu-latest
 
-#     steps:
-#       - name: Checkout repo
-#         uses: actions/checkout@v4
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-#       - name: Set up Python
-#         uses: actions/setup-python@v5
-#         with:
-#           python-version: '3.12.10'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
 
-#       - name: Install dependencies
-#         run: |
-#           python -m pip install --upgrade pip
-#           pip install -r python/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r python/requirements.txt
 
-#       - name: Run getter.py
-#         if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'getter' || github.event.inputs.run_mode == 'both'
-#         run: python python/getter.py
-#         env: 
-#           _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
-#           _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
-#           _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
-#           _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
-#           GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
-#           GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
-#           _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
+      - name: Run getter.py
+        if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'getter' || github.event.inputs.run_mode == 'both'
+        run: python python/getter.py
+        env: 
+          _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
+          _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
+          _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
+          _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
 
-#       - name: Run logiczer.py
-#         if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'logiczer' || github.event.inputs.run_mode == 'both'
-#         run: python python/logiczer.py
-#         env: 
-#           _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
-#           _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
-#           _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
-#           _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
-#           GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
-#           GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
-#           _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
+      - name: Run infoer.py
+        if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'infoer' || github.event.inputs.run_mode == 'both'
+        run: python python/infoer.py
+        env: 
+          _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
+          _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
+          _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
+          _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
+
+      - name: Run logiczer.py
+        if: github.event_name == 'schedule' || github.event.inputs.run_mode == 'logiczer' || github.event.inputs.run_mode == 'both'
+        run: python python/logiczer.py
+        env: 
+          _GITHUB_TOKEN: ${{ secrets._GITHUB_TOKEN }}
+          _BRANCH_NAME: ${{ secrets._BRANCH_NAME }}
+          _GITHUB_REPO: ${{ secrets._GITHUB_REPO }}
+          _STOCK_DB_REPO: ${{ secrets._STOCK_DB_REPO }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          _STOCK_DB_REPO_PREFIX: ${{ secrets._STOCK_DB_REPO_PREFIX }}
