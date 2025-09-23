@@ -15,7 +15,7 @@ To view the webpage resulted from this repo and other repo connected by this pro
 
 ## 🧱 System Architecture and Pipeline
 
-The architecture follows a producer-consumer pattern, where backend Python scripts collect and process stock data, storing results across multiple GitHub repositories that serve as a distributed data layer for the frontend React application. Whilst the pipeline of the system architecture is as such:
+The architecture follows a producer-consumer pattern, where backend Python scripts collect and process stock data, storing results across multiple GitHub repositories that serve as a distributed data layer for the frontend React application. Whilst the pipeline of the system architecture can be visualized such:
 <img src="https://raw.githubusercontent.com/mirellarhea/stock-screener/main/public/pipeline.svg" alt="Workflow.svg" style="width: 100%;" />
 
 ### Key Components:
