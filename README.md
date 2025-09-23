@@ -13,10 +13,10 @@ The Stock Screener operates as a distributed system with automated data pipeline
 To view the webpage resulted from this repo and other repo connected by this project, visit [HERE](https://screenid.vercel.app)
 
 
-## 🧱 System Architecture and Workflow
+## 🧱 System Architecture and Pipeline
 
-The architecture follows a producer-consumer pattern, where backend Python scripts collect and process stock data, storing results across multiple GitHub repositories that serve as a distributed data layer for the frontend React application. Whilst the work flow is as such:
-<img src="https://raw.githubusercontent.com/mirellarhea/stock-screener/main/public/workflow.svg" alt="Workflow.svg" style="width: 100%;" />
+The architecture follows a producer-consumer pattern, where backend Python scripts collect and process stock data, storing results across multiple GitHub repositories that serve as a distributed data layer for the frontend React application. Whilst the pipeline of the system architecture is as such:
+<img src="https://raw.githubusercontent.com/mirellarhea/stock-screener/main/public/pipeline.svg" alt="Workflow.svg" style="width: 100%;" />
 
 ### Key Components:
 
