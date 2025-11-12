@@ -1,185 +1,95 @@
-import React, { useMemo } from "react";
-import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  flexRender,
-  createColumnHelper,
-} from "@tanstack/react-table";
-import { useInView } from "react-intersection-observer";
+import React from "react";
 
 const StockTable = ({
   data,
   onRowClick,
-  onSort,
-  sortConfig,
-  loadMore,
-  hasMore,
-  isLoading,
   selectedStock = null,
 }) => {
-  // Debug logging
-  console.log("StockTable received data:", data);
-  console.log("Data length:", data?.length);
-  console.log("Is loading:", isLoading);
+  const colorize = (value, maxAbs = 10) => {
+    if (value == null || isNaN(value)) return 'transparent'
 
-  const { ref, inView } = useInView({
-    threshold: 0.1,
-  });
+    const ratio = Math.max(-1, Math.min(1, value / maxAbs))
+    const green = ratio > 0 ? Math.floor(80 + 100 * ratio) : 80
+    const red = ratio < 0 ? Math.floor(80 - 100 * ratio) : 80
+    const color = `rgb(${red}, ${green}, 80)`
+    return color
+  }
 
-  React.useEffect(() => {
-    if (inView && hasMore && !isLoading) {
-      loadMore();
+  const getCellStyle = (value, atrPct) => {
+    const scale = atrPct || 5
+    return {
+      backgroundColor: colorize(value, scale),
+      color: value != null && !isNaN(value) ? '#fff' : 'inherit'
     }
-  }, [inView, hasMore, isLoading, loadMore]);
-
-  const columnHelper = createColumnHelper();
-
-  const columns = useMemo(
-    () => [
-      columnHelper.accessor("symbol", {
-        header: "Symbol",
-        cell: (info) => info.getValue(),
-      }),
-      columnHelper.accessor((row) => row.technical?.close, {
-        id: "technical.close",
-        header: "Price",
-        cell: (info) =>
-          info
-            .getValue()
-            ?.toLocaleString("en-US", { minimumFractionDigits: 2 }) || "N/A",
-      }),
-      columnHelper.accessor((row) => row.technical?.volume, {
-        id: "technical.volume",
-        header: "Volume",
-        cell: (info) => (info.getValue() / 1000000).toFixed(2) + "M",
-      }),
-      columnHelper.accessor((row) => row.technical?.relative_volume, {
-        id: "technical.relative_volume",
-        header: "Rel Volume",
-        cell: (info) => info.getValue()?.toFixed(2) || "N/A",
-      }),
-      columnHelper.accessor((row) => row.technical?.rsi_14, {
-        id: "technical.rsi_14",
-        header: "RSI (14)",
-        cell: (info) => {
-          const value = info.getValue();
-          let className = "";
-          if (value < 30) className = "rsi-oversold";
-          if (value > 70) className = "rsi-overbought";
-          return <span className={className}>{value?.toFixed(2)}</span>;
-        },
-      }),
-      columnHelper.accessor((row) => row.technical?.atr_pct, {
-        id: "technical.atr_pct",
-        header: "ATR %",
-        cell: (info) => info.getValue()?.toFixed(2) + "%",
-      }),
-      columnHelper.accessor((row) => row.technical?.market_stage, {
-        id: "technical.market_stage",
-        header: "Trend",
-        cell: (info) => {
-          const value = info.getValue();
-          let className = "";
-          if (value === "downtrend") className = "trend-down";
-          if (value === "uptrend") className = "trend-up";
-          return <span className={className}>{value}</span>;
-        },
-      }),
-    ],
-    [columnHelper]
-  );
-
-  const table = useReactTable({
-    data,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    manualSorting: true,
-    state: {
-      sorting: [{ id: sortConfig.key, desc: sortConfig.direction === "desc" }],
-    },
-    onSortingChange: (updater) => {
-      const newSorting =
-        typeof updater === "function"
-          ? updater([
-              { id: sortConfig.key, desc: sortConfig.direction === "desc" },
-            ])
-          : updater;
-
-      if (newSorting.length > 0) {
-        onSort(newSorting[0].id);
-      }
-    },
-  });
+  }
 
   return (
-    <div className="stock-table">
-      {/* Add debug info */}
-      <div
-        style={{
-          padding: "10px",
-          background: "#f0f0f0",
-          marginBottom: "10px",
-        }}
-      >
-        <strong>Debug Info:</strong> Data items: {data?.length || 0} | Loading:{" "}
-        {isLoading ? "Yes" : "No"} | Has more: {hasMore ? "Yes" : "No"}
-      </div>
-
-      {data?.length === 0 && !isLoading && (
+    <div className="stock-table-container">
+      {data?.length === 0 && (
         <div className="no-data">No stocks to display</div>
       )}
 
-      <table>
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th
-                  key={header.id}
-                  onClick={header.column.getToggleSortingHandler()}
+      <div className="stock-table-scroll">
+        <table className="stock-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Price</th>
+              <th>Volume</th>
+              <th>RSI</th>
+              <th>ATR%</th>
+              <th>Trend</th>
+              <th>MA Align</th>
+              <th>% to SMA50</th>
+              <th>5Δ%</th>
+              <th>20Δ%</th>
+              <th>50Δ%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((stock) => (
+              <tr
+                key={stock.symbol}
+                onClick={() => onRowClick(stock)}
+                className={selectedStock?.symbol === stock.symbol ? "selected" : ""}
+              >
+                <td className="symbol-cell">{stock.symbol}</td>
+                <td>{stock.close?.toFixed(0) || '-'}</td>
+                <td>{stock.volume ? (stock.volume / 1000000).toFixed(1) + 'M' : '-'}</td>
+                <td 
                   className={
-                    sortConfig.key === header.column.id ? "active-sort" : ""
+                    stock.rsi_14 < 30 ? 'rsi-oversold' : 
+                    stock.rsi_14 > 70 ? 'rsi-overbought' : ''
                   }
                 >
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
-                  {sortConfig.key === header.column.id && (
-                    <span>{sortConfig.direction === "asc" ? " ↑" : " ↓"}</span>
-                  )}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr
-              key={row.id}
-              onClick={() => onRowClick(row.original)}
-              className={
-                selectedStock?.symbol === row.original.symbol ? "selected" : ""
-              }
-            >
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  {stock.rsi_14?.toFixed(1) || '-'}
                 </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {/* Loading indicator at the bottom */}
-      <div ref={ref} className="loader-trigger">
-        {isLoading && <div className="loader">Loading...</div>}
-        {!hasMore && <div className="end-message">No more stocks to load</div>}
+                <td>{stock.atr_pct?.toFixed(2) || '-'}</td>
+                <td 
+                  className={
+                    stock.market_stage === 'uptrend' ? 'trend-up' :
+                    stock.market_stage === 'downtrend' ? 'trend-down' : ''
+                  }
+                >
+                  {stock.market_stage || '-'}
+                </td>
+                <td>{stock.ma_alignment || '-'}</td>
+                <td style={getCellStyle(stock.price_vs_sma_50_pct, stock.atr_pct)}>
+                  {stock.price_vs_sma_50_pct?.toFixed(1) || '-'}%
+                </td>
+                <td style={getCellStyle(stock.sma_5_diff_pct, stock.atr_pct)}>
+                  {stock.sma_5_diff_pct?.toFixed(1) || '-'}%
+                </td>
+                <td style={getCellStyle(stock.sma_20_diff_pct, stock.atr_pct)}>
+                  {stock.sma_20_diff_pct?.toFixed(1) || '-'}%
+                </td>
+                <td style={getCellStyle(stock.sma_50_diff_pct, stock.atr_pct)}>
+                  {stock.sma_50_diff_pct?.toFixed(1) || '-'}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
